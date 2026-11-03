@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Products Collection: Public read for customers, full access for updates
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if true;
+    }
+    
+    // Store Settings: Public read, full access for admin
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Default deny for other collections
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

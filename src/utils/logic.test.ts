@@ -169,3 +169,32 @@ test('product card layout modes support standard and compact', () => {
   assert.equal(layouts.includes('compact'), true);
 });
 
+test('cloud database: parses JS object firebaseConfig correctly', () => {
+  const snippet = `const firebaseConfig = {
+    apiKey: "AIzaSyFakeKey123",
+    authDomain: "iin-store-test.firebaseapp.com",
+    projectId: "iin-store-test",
+    storageBucket: "iin-store-test.firebasestorage.app",
+    messagingSenderId: "987654321",
+    appId: "1:987654321:web:abcdef123456"
+  };`;
+
+  let clean = snippet.trim();
+  if (clean.includes('{') && clean.includes('}')) {
+    clean = clean.substring(clean.indexOf('{'), clean.lastIndexOf('}') + 1);
+  }
+  const parsed = Function('"use strict";return (' + clean + ')')();
+  assert.equal(parsed.apiKey, 'AIzaSyFakeKey123');
+  assert.equal(parsed.projectId, 'iin-store-test');
+  assert.equal(parsed.appId, '1:987654321:web:abcdef123456');
+});
+
+test('cloud database: product model holds complete required fields for Firestore', () => {
+  assert.ok(mockProductA.id);
+  assert.ok(mockProductA.title);
+  assert.ok(mockProductA.priceSAR > 0);
+  assert.ok(mockProductA.category);
+  assert.ok(Array.isArray(mockProductA.images));
+  assert.ok(Array.isArray(mockProductA.availableSizes));
+});
+

@@ -53,6 +53,11 @@ import {
 } from 'lucide-react';
 import { OFFICIAL_WHATSAPP_NUMBER } from './utils/whatsapp.ts';
 import { formatCurrencyLabel, convertSARtoCurrency } from './utils/pricing.ts';
+import { 
+  subscribeToProducts, 
+  subscribeToSettings, 
+  isCloudConfigured 
+} from './services/firebase.ts';
 
 const CATEGORY_TITLES: Record<string, string> = {
   perfumes: 'عطور راقية وبخور فاخر',
@@ -204,6 +209,33 @@ export default function App() {
       console.warn('Failed to save audit logs to localStorage', e);
     }
   }, [auditLogs]);
+
+  // Real-time Cloud Synchronization (Firebase Firestore)
+  useEffect(() => {
+    let unsubscribeProducts: (() => void) | null = null;
+    let unsubscribeSettings: (() => void) | null = null;
+
+    try {
+      unsubscribeProducts = subscribeToProducts((cloudProducts) => {
+        if (cloudProducts && cloudProducts.length > 0) {
+          setProducts(cloudProducts);
+        }
+      });
+
+      unsubscribeSettings = subscribeToSettings((cloudSettings) => {
+        if (cloudSettings) {
+          setSettings((prev) => ({ ...prev, ...cloudSettings }));
+        }
+      });
+    } catch (err) {
+      console.warn('Real-time cloud sync subscription notice:', err);
+    }
+
+    return () => {
+      if (unsubscribeProducts) unsubscribeProducts();
+      if (unsubscribeSettings) unsubscribeSettings();
+    };
+  }, []);
 
   // Navigation & Filtering
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory>('all');

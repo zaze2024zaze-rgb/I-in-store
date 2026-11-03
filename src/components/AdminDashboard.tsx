@@ -26,10 +26,16 @@ import {
   Sparkles,
   Gift,
   Crown,
-  Building2,
   MessageSquare,
   Eye,
-  EyeOff
+  EyeOff,
+  Database,
+  Cloud,
+  RefreshCw,
+  AlertCircle,
+  CheckCircle2,
+  ExternalLink,
+  Copy
 } from 'lucide-react';
 import { 
   Product, 
@@ -46,6 +52,18 @@ import {
 } from '../types.ts';
 import { createAuditLogEntry, sanitizeInput } from '../utils/security.ts';
 import { formatCurrencyLabel } from '../utils/pricing.ts';
+import {
+  getActiveFirebaseConfig,
+  saveCustomFirebaseConfig,
+  clearCustomFirebaseConfig,
+  testFirebaseConnection,
+  syncAllProductsToCloud,
+  saveProductToCloud,
+  deleteProductFromCloud,
+  saveSettingsToCloud,
+  isCloudConfigured,
+  FirebaseConfig
+} from '../services/firebase.ts';
 
 interface AdminDashboardProps {
   products: Product[];
@@ -112,7 +130,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onBroadcastNotification,
 }) => {
   // Tabs
-  const [currentTab, setCurrentTab] = useState<'settings' | 'banners' | 'products' | 'banks' | 'reviews' | 'coupons' | 'orders' | 'notifications' | 'kpis' | 'audit'>('settings');
+  const [currentTab, setCurrentTab] = useState<'settings' | 'banners' | 'products' | 'banks' | 'reviews' | 'coupons' | 'orders' | 'notifications' | 'kpis' | 'audit' | 'cloud'>('settings');
+
+  // Cloud Database state (Firebase Firestore)
+  const [isCloudActive, setIsCloudActive] = useState<boolean>(() => isCloudConfigured());
+  const activeCfg = getActiveFirebaseConfig();
+  const [cloudApiKey, setCloudApiKey] = useState(activeCfg?.apiKey || '');
+  const [cloudAuthDomain, setCloudAuthDomain] = useState(activeCfg?.authDomain || '');
+  const [cloudProjectId, setCloudProjectId] = useState(activeCfg?.projectId || '');
+  const [cloudStorageBucket, setCloudStorageBucket] = useState(activeCfg?.storageBucket || '');
+  const [cloudSenderId, setCloudSenderId] = useState(activeCfg?.messagingSenderId || '');
+  const [cloudAppId, setCloudAppId] = useState(activeCfg?.appId || '');
+  const [rawJsonConfig, setRawJsonConfig] = useState('');
+  
+  const [cloudTesting, setCloudTesting] = useState(false);
+  const [cloudTestResult, setCloudTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [cloudSyncResult, setCloudSyncResult] = useState<string | null>(null);
+  const [cloudSaveMessage, setCloudSaveMessage] = useState<string | null>(null);
 
   // Product editing state
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -310,6 +345,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       if (editingProduct && editingProduct.id === id) {
         setEditingProduct(null);
       }
+      if (isCloudConfigured()) {
+        deleteProductFromCloud(id).catch((err) => console.warn('Cloud product deletion note:', err));
+      }
     } else if (type === 'banner') {
       const updated = banners.filter((b) => b.id !== id);
       onUpdateBanners(updated);
@@ -464,6 +502,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       };
 
       onUpdateProducts([newProduct, ...products]);
+      if (isCloudConfigured()) {
+        saveProductToCloud(newProduct).catch((err) => console.warn('Cloud product add notice:', err));
+      }
       onAddAuditLog(
         createAuditLogEntry(
           'إضافة منتج جديد وتوثيق تقييم المشرف',
@@ -472,9 +513,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         )
       );
     } else if (editingProduct) {
+      let savedProductObj: Product | null = null;
       const updated = products.map((p) => {
         if (p.id === editingProduct.id) {
-          return {
+          const modProd: Product = {
             ...p,
             title: cleanTitle,
             code: finalCode,
@@ -494,11 +536,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               staffNotes: prodAdminNotes,
             },
           };
+          savedProductObj = modProd;
+          return modProd;
         }
         return p;
       });
 
       onUpdateProducts(updated);
+      if (savedProductObj && isCloudConfigured()) {
+        saveProductToCloud(savedProductObj).catch((err) => console.warn('Cloud product update notice:', err));
+      }
       onAddAuditLog(
         createAuditLogEntry(
           'تعديل منتج وتحديث السعر والمواصفات',
@@ -676,6 +723,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     };
 
     onUpdateSettings(updated);
+    if (isCloudConfigured()) {
+      saveSettingsToCloud(updated).catch((err) => console.warn('Cloud settings update notice:', err));
+    }
     onAddAuditLog(
       createAuditLogEntry(
         'تحديث شامل لإعدادات المتجر',
@@ -685,6 +735,121 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     );
     setSettingsSuccess(true);
     setTimeout(() => setSettingsSuccess(false), 3000);
+  };
+
+  // Cloud Database Handlers
+  const handleSaveCloudConfig = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCloudSaveMessage(null);
+    setCloudTestResult(null);
+
+    let configToSave: FirebaseConfig;
+
+    // Check if user pasted full raw JSON config
+    if (rawJsonConfig.trim()) {
+      try {
+        let clean = rawJsonConfig.trim();
+        // Support JS object syntax e.g. const firebaseConfig = { ... };
+        if (clean.includes('{') && clean.includes('}')) {
+          clean = clean.substring(clean.indexOf('{'), clean.lastIndexOf('}') + 1);
+        }
+        // Normalize keys if not quoted JSON
+        const parsed = Function('"use strict";return (' + clean + ')')();
+        if (!parsed.apiKey || !parsed.projectId) {
+          throw new Error('الكود الملصق لا يحتوي على apiKey أو projectId صالح.');
+        }
+        configToSave = {
+          apiKey: parsed.apiKey,
+          authDomain: parsed.authDomain || `${parsed.projectId}.firebaseapp.com`,
+          projectId: parsed.projectId,
+          storageBucket: parsed.storageBucket || `${parsed.projectId}.firebasestorage.app`,
+          messagingSenderId: parsed.messagingSenderId || '',
+          appId: parsed.appId || '',
+        };
+        // Update input states
+        setCloudApiKey(configToSave.apiKey);
+        setCloudAuthDomain(configToSave.authDomain);
+        setCloudProjectId(configToSave.projectId);
+        setCloudStorageBucket(configToSave.storageBucket || '');
+        setCloudSenderId(configToSave.messagingSenderId || '');
+        setCloudAppId(configToSave.appId);
+      } catch (err: any) {
+        setCloudSaveMessage(`خطأ في قراءة كود الإعداد: ${err.message || 'تأكد من صحة الكود الملصق'}`);
+        return;
+      }
+    } else {
+      if (!cloudApiKey.trim() || !cloudProjectId.trim()) {
+        setCloudSaveMessage('يرجى إدخال apiKey و projectId على الأقل.');
+        return;
+      }
+      configToSave = {
+        apiKey: cloudApiKey.trim(),
+        authDomain: cloudAuthDomain.trim() || `${cloudProjectId.trim()}.firebaseapp.com`,
+        projectId: cloudProjectId.trim(),
+        storageBucket: cloudStorageBucket.trim() || `${cloudProjectId.trim()}.firebasestorage.app`,
+        messagingSenderId: cloudSenderId.trim(),
+        appId: cloudAppId.trim(),
+      };
+    }
+
+    try {
+      saveCustomFirebaseConfig(configToSave);
+      setIsCloudActive(true);
+      setCloudSaveMessage('✓ تم حفظ إعدادات الربط السحابي بنجاح! يتم الآن تفعيل المزامنة المباشرة.');
+      onAddAuditLog(createAuditLogEntry('تحديث إعدادات السحابة Firebase', configToSave.projectId, 'تم حفظ مفاتيح قاعدة البيانات السحابية'));
+    } catch (err: any) {
+      setCloudSaveMessage(`تعذر الحفظ: ${err.message}`);
+    }
+  };
+
+  const handleTestCloudConnection = async () => {
+    setCloudTesting(true);
+    setCloudTestResult(null);
+    try {
+      const res = await testFirebaseConnection();
+      setCloudTestResult(res);
+      if (res.success) {
+        setIsCloudActive(true);
+      }
+    } catch (err: any) {
+      setCloudTestResult({ success: false, message: err.message || 'فشل الاتصال' });
+    } finally {
+      setCloudTesting(false);
+    }
+  };
+
+  const handleSyncAllToCloud = async () => {
+    if (!isCloudConfigured()) {
+      setCloudSyncResult('يرجى حفظ إعدادات السحابة أولاً قبل بدء المزامنة.');
+      return;
+    }
+    setCloudSyncing(true);
+    setCloudSyncResult(null);
+    try {
+      const count = await syncAllProductsToCloud(products);
+      setCloudSyncResult(`✓ تم بنجاح رفع ومزامنة ${count} منتج إلى قاعدة بيانات Firebase Firestore السحابية! ستظهر الآن لجميع الزبائن فوراً.`);
+      onAddAuditLog(createAuditLogEntry('مزامنة شاملة للمنتجات إلى السحابة', `${count} منتج`, 'رفع كافة المنتجات الحالية إلى Firestore'));
+    } catch (err: any) {
+      setCloudSyncResult(`تعذرت المزامنة: ${err.message || 'تحقق من قواعد الأمان وقفل Firestore'}`);
+    } finally {
+      setCloudSyncing(false);
+    }
+  };
+
+  const handleClearCloud = () => {
+    clearCustomFirebaseConfig();
+    setIsCloudActive(false);
+    setCloudApiKey('');
+    setCloudAuthDomain('');
+    setCloudProjectId('');
+    setCloudStorageBucket('');
+    setCloudSenderId('');
+    setCloudAppId('');
+    setRawJsonConfig('');
+    setCloudTestResult(null);
+    setCloudSyncResult(null);
+    setCloudSaveMessage('تم مسح إعدادات السحابة. المتجر يعمل الآن بالوضع المحلي الآمن.');
+    onAddAuditLog(createAuditLogEntry('إلغاء ربط السحابة', 'Firebase', 'العودة للوضع المحلي'));
   };
 
   const totalRevenueSAR = orders.reduce((acc, ord) => acc + ord.total, 0);
@@ -709,6 +874,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setCurrentTab('cloud')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+              isCloudActive 
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                : 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
+            }`}
+            title="حالة الربط السحابي مع Firebase Firestore"
+          >
+            <Database className="w-3.5 h-3.5 text-[#C5A880]" />
+            <span>{isCloudActive ? 'السحابة: متصلة حية 🟢' : 'السحابة: وضع محلي 🟡'}</span>
+          </button>
+
+          <button
             onClick={() => {
               onBroadcastNotification('تخفيضات استثنائية! استخدم كود VIP50 لخصم 50 ر.س على تشكيلة الهوت كوتور ✨');
             }}
@@ -731,6 +909,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* Tabs Bar */}
       <div className="max-w-7xl mx-auto mb-6 flex flex-wrap gap-2 border-b border-[#E0D9CE] pb-3 text-xs font-bold">
+        <button
+          onClick={() => setCurrentTab('cloud')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all cursor-pointer ${
+            currentTab === 'cloud' 
+              ? 'bg-[#8B6B3F] text-white shadow-md' 
+              : 'bg-white text-[#111111] hover:bg-[#EAE6DE] border border-[#E0D9CE]'
+          }`}
+        >
+          <Database className="w-4 h-4 text-[#C5A880]" />
+          <span>الربط السحابي (Firebase)</span>
+          <span className={`w-2 h-2 rounded-full ${isCloudActive ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+        </button>
+
         <button
           onClick={() => setCurrentTab('settings')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all cursor-pointer ${
@@ -2617,6 +2808,361 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Tab: Cloud Database (Firebase Firestore) */}
+        {currentTab === 'cloud' && (
+          <div className="space-y-6 max-w-4xl">
+            {/* Header & Status Card */}
+            <div className="bg-white p-6 sm:p-7 rounded-2xl border border-[#DCD5C9] shadow-sm space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EFECE6] pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-xl bg-[#FAF6F0] border border-[#C5A880]/30 flex items-center justify-center text-[#8B6B3F]">
+                    <Database className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold text-[#111111] flex items-center gap-2">
+                      <span>الربط السحابي والمزامنة الحية (Firebase Firestore)</span>
+                      <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-bold ${
+                        isCloudActive 
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                          : 'bg-amber-100 text-amber-800 border border-amber-300'
+                      }`}>
+                        {isCloudActive ? '✓ متصل بالسحابة (مزامنة فورية حية)' : 'يعمل بالوضع المحلي الآمن'}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-[#777777] mt-0.5">
+                      ربط المتجر بقاعدة بيانات Firebase مجانية بنسبة 100% لمزامنة المنتجات والأسعار بين كل الأجهزة فورياً.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTestCloudConnection}
+                    disabled={cloudTesting}
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-[#FAF8F5] text-[#8B6B3F] hover:bg-[#F2EFE9] rounded-xl text-xs font-bold border border-[#E5DFD7] transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${cloudTesting ? 'animate-spin' : ''}`} />
+                    <span>{cloudTesting ? 'جاري الفحص...' : 'فحص واختبار الاتصال'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Details */}
+              {isCloudActive ? (
+                <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 flex items-start gap-3 text-xs text-emerald-900">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-bold">المزامنة السحابية مفعلة بنجاح!</p>
+                    <p className="text-[11px] text-emerald-800 leading-relaxed">
+                      أي منتج تضيفه أو تعدله أو تحذفه من جوالك أو حاسوبك يتم حفظه في قاعدة بيانات Firestore السحابية فورياً، وتظهر التحديثات لجميع العملاء والزوار في نفس اللحظة.
+                      {cloudProjectId && <span className="block mt-1 font-mono text-[10px] text-emerald-700 font-semibold">المشروع الحالي: {cloudProjectId}</span>}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-4 flex items-start gap-3 text-xs text-amber-900">
+                  <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-bold">المتجر يعمل حالياً بالوضع المحلي (Local Storage)</p>
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      التعديلات محفوظة على هذا المتصفح. لربط جميع الأجهزة والزبائن معاً، اتبع الخطوات البسيطة أدناه لإنشاء حساب Firebase المجاني (Spark Plan) وإدخال المفاتيح.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Feedback Alerts */}
+              {cloudTestResult && (
+                <div className={`p-3.5 rounded-xl text-xs flex items-center gap-2 border ${
+                  cloudTestResult.success 
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300' 
+                    : 'bg-red-50 text-red-800 border-red-300'
+                }`}>
+                  {cloudTestResult.success ? <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" /> : <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />}
+                  <span>{cloudTestResult.message}</span>
+                </div>
+              )}
+
+              {cloudSaveMessage && (
+                <div className={`p-3.5 rounded-xl text-xs flex items-center gap-2 border ${
+                  cloudSaveMessage.includes('✓') 
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300' 
+                    : 'bg-red-50 text-red-800 border-red-300'
+                }`}>
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                  <span>{cloudSaveMessage}</span>
+                </div>
+              )}
+
+              {cloudSyncResult && (
+                <div className={`p-3.5 rounded-xl text-xs flex items-center gap-2 border ${
+                  cloudSyncResult.includes('✓') 
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300' 
+                    : 'bg-red-50 text-red-800 border-red-300'
+                }`}>
+                  {cloudSyncResult.includes('✓') ? <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" /> : <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />}
+                  <span>{cloudSyncResult}</span>
+                </div>
+              )}
+
+              {/* One-click Sync / Seed Button */}
+              <div className="pt-2 border-t border-[#EFECE6] flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs font-bold text-[#111111]">مزامنة المنتجات الحالية ({products.length} منتج)</h4>
+                  <p className="text-[11px] text-[#777777]">
+                    رفع كافة المنتجات المعروضة حالياً إلى قاعدة البيانات السحابية بضغطة زر واحدة.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSyncAllToCloud}
+                  disabled={cloudSyncing}
+                  className="flex items-center gap-1.5 px-4 py-2.5 bg-[#8B6B3F] hover:bg-[#72562F] text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                >
+                  <Upload className={`w-3.5 h-3.5 ${cloudSyncing ? 'animate-bounce' : ''}`} />
+                  <span>{cloudSyncing ? 'جاري الرفع والمزامنة...' : `مزامنة ${products.length} منتج إلى السحابة فوراً`}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Credentials Configuration Form */}
+            <div className="bg-white p-6 sm:p-7 rounded-2xl border border-[#DCD5C9] shadow-sm space-y-5">
+              <div className="border-b border-[#EFECE6] pb-3">
+                <h4 className="text-sm font-extrabold text-[#111111] flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-[#8B6B3F]" />
+                  <span>إدخال مفاتيح الربط (Firebase Config)</span>
+                </h4>
+                <p className="text-xs text-[#777777] mt-1">
+                  يمكنك لصق كود الإعداد كاملاً من لوحة تحكم Firebase، أو إدخال الحقول يدوياً.
+                </p>
+              </div>
+
+              <form onSubmit={handleSaveCloudConfig} className="space-y-4 text-xs">
+                {/* Method 1: Raw JSON / Code Snippet */}
+                <div className="space-y-1.5 bg-[#FAF9F6] p-4 rounded-xl border border-[#E8E4DD]">
+                  <label className="block text-xs font-bold text-[#111111]">
+                    الطريقة السريعة: الصق كود (firebaseConfig) كاملاً هنا
+                  </label>
+                  <p className="text-[11px] text-[#777777]">
+                    انسخ الكود الذي يظهر لك في Firebase Console وضعه هنا كما هو:
+                  </p>
+                  <textarea
+                    rows={4}
+                    value={rawJsonConfig}
+                    onChange={(e) => setRawJsonConfig(e.target.value)}
+                    placeholder={`const firebaseConfig = {\n  apiKey: "AIzaSy...",\n  authDomain: "iin-store.firebaseapp.com",\n  projectId: "iin-store",\n  storageBucket: "iin-store.firebasestorage.app",\n  messagingSenderId: "...",\n  appId: "..."\n};`}
+                    className="w-full bg-white border border-[#D5CFC7] rounded-lg p-2.5 font-mono text-[11px] text-[#111111] focus:ring-2 focus:ring-[#8B6B3F] focus:outline-none"
+                    dir="ltr"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 my-2 text-xs text-[#888888] font-bold">
+                  <div className="flex-1 h-px bg-[#E5DFD7]" />
+                  <span>أو إدخال الحقول منفصلة</span>
+                  <div className="flex-1 h-px bg-[#E5DFD7]" />
+                </div>
+
+                {/* Method 2: Individual Fields */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-[#333333]">
+                      مفتاح الواجهة (API Key) <span className="text-[#A34E36]">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={cloudApiKey}
+                      onChange={(e) => setCloudApiKey(e.target.value)}
+                      placeholder="AIzaSy..."
+                      className="w-full bg-[#FAF9F6] border border-[#D5CFC7] rounded-lg p-2.5 text-xs font-mono"
+                      dir="ltr"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-[#333333]">
+                      معرف المشروع (Project ID) <span className="text-[#A34E36]">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={cloudProjectId}
+                      onChange={(e) => setCloudProjectId(e.target.value)}
+                      placeholder="iin-store-xxxx"
+                      className="w-full bg-[#FAF9F6] border border-[#D5CFC7] rounded-lg p-2.5 text-xs font-mono"
+                      dir="ltr"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-[#333333]">
+                      معرف التطبيق (App ID)
+                    </label>
+                    <input
+                      type="text"
+                      value={cloudAppId}
+                      onChange={(e) => setCloudAppId(e.target.value)}
+                      placeholder="1:123456789:web:xxxx"
+                      className="w-full bg-[#FAF9F6] border border-[#D5CFC7] rounded-lg p-2.5 text-xs font-mono"
+                      dir="ltr"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-[#333333]">
+                      نطاق المصادقة (Auth Domain)
+                    </label>
+                    <input
+                      type="text"
+                      value={cloudAuthDomain}
+                      onChange={(e) => setCloudAuthDomain(e.target.value)}
+                      placeholder="iin-store-xxxx.firebaseapp.com"
+                      className="w-full bg-[#FAF9F6] border border-[#D5CFC7] rounded-lg p-2.5 text-xs font-mono"
+                      dir="ltr"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-[#333333]">
+                      سلة التخزين (Storage Bucket)
+                    </label>
+                    <input
+                      type="text"
+                      value={cloudStorageBucket}
+                      onChange={(e) => setCloudStorageBucket(e.target.value)}
+                      placeholder="iin-store-xxxx.firebasestorage.app"
+                      className="w-full bg-[#FAF9F6] border border-[#D5CFC7] rounded-lg p-2.5 text-xs font-mono"
+                      dir="ltr"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-[#333333]">
+                      معرف المرسل (Messaging Sender ID)
+                    </label>
+                    <input
+                      type="text"
+                      value={cloudSenderId}
+                      onChange={(e) => setCloudSenderId(e.target.value)}
+                      placeholder="123456789012"
+                      className="w-full bg-[#FAF9F6] border border-[#D5CFC7] rounded-lg p-2.5 text-xs font-mono"
+                      dir="ltr"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#EFECE6]">
+                  <button
+                    type="submit"
+                    className="px-6 py-2.5 bg-[#111111] hover:bg-[#333333] text-white rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                  >
+                    <Check className="w-4 h-4 text-[#C5A880]" />
+                    <span>حفظ وتفعيل المزامنة الفورية</span>
+                  </button>
+
+                  {isCloudActive && (
+                    <button
+                      type="button"
+                      onClick={handleClearCloud}
+                      className="px-4 py-2 border border-[#D5CFC7] text-[#777777] hover:text-[#A34E36] hover:bg-red-50 rounded-xl text-xs font-semibold cursor-pointer transition-colors"
+                    >
+                      إلغاء الربط والرجوع للوضع المحلي
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+
+            {/* Illustrated Setup Guide */}
+            <div className="bg-white p-6 sm:p-7 rounded-2xl border border-[#DCD5C9] shadow-sm space-y-4">
+              <div className="border-b border-[#EFECE6] pb-3">
+                <h4 className="text-sm font-extrabold text-[#111111] flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#8B6B3F]" />
+                  <span>خطوات بسيطة للحصول على قاعدة البيانات المجانية (Spark Plan)</span>
+                </h4>
+                <p className="text-xs text-[#777777] mt-1">
+                  خدمة Firebase من Google مجانية 100% بدون أي رسوم، وتمنحك 50,000 عملية قراءة يومياً.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                {/* Step 1 */}
+                <div className="p-4 rounded-xl bg-[#FAF9F6] border border-[#E8E4DD] space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-full bg-[#111111] text-[#C5A880] text-xs font-bold flex items-center justify-center">1</span>
+                    <strong className="text-[#111111]">فتح Firebase Console</strong>
+                  </div>
+                  <p className="text-[#555555] text-[11px] leading-relaxed">
+                    توجه إلى موقع <strong>console.firebase.google.com</strong> وسجل الدخول بحساب Google العادي الخاص بك.
+                  </p>
+                  <a
+                    href="https://console.firebase.google.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] text-[#8B6B3F] hover:underline font-bold"
+                  >
+                    <span>فتح رابط Firebase Console</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+
+                {/* Step 2 */}
+                <div className="p-4 rounded-xl bg-[#FAF9F6] border border-[#E8E4DD] space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-full bg-[#111111] text-[#C5A880] text-xs font-bold flex items-center justify-center">2</span>
+                    <strong className="text-[#111111]">إنشاء مشروع جديد (Add Project)</strong>
+                  </div>
+                  <p className="text-[#555555] text-[11px] leading-relaxed">
+                    اضغط على زر <strong>Add project</strong> واختر اسماً للمتجر مثل <span className="font-mono text-[#8B6B3F]">i-in-store</span>. اختر الخطة الافتراضية المجانية <strong>Spark Plan (Free)</strong>.
+                  </p>
+                </div>
+
+                {/* Step 3 */}
+                <div className="p-4 rounded-xl bg-[#FAF9F6] border border-[#E8E4DD] space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-full bg-[#111111] text-[#C5A880] text-xs font-bold flex items-center justify-center">3</span>
+                    <strong className="text-[#111111]">تفعيل قاعدة بيانات Firestore</strong>
+                  </div>
+                  <p className="text-[#555555] text-[11px] leading-relaxed">
+                    من القائمة الجانبية اختر <strong>Build &gt; Firestore Database</strong> ثم اضغط <strong>Create database</strong>. اختر الوضع <strong>Start in test mode</strong> وحدد أقرب منطقة جغرافية.
+                  </p>
+                </div>
+
+                {/* Step 4 */}
+                <div className="p-4 rounded-xl bg-[#FAF9F6] border border-[#E8E4DD] space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-full bg-[#111111] text-[#C5A880] text-xs font-bold flex items-center justify-center">4</span>
+                    <strong className="text-[#111111]">نسخ كود الويب ولصقه هنا</strong>
+                  </div>
+                  <p className="text-[#555555] text-[11px] leading-relaxed">
+                    اضغط على أيقونة الإعدادات ⚙️ أعلى اليسار (Project Settings) &gt; قسم Your apps &gt; اضغط على علامة الويب <strong>&lt;/&gt;</strong> وانسخ كائن <span className="font-mono">firebaseConfig</span> وضعه في المربع بالأعلى واضغط حفظ!
+                  </p>
+                </div>
+              </div>
+
+              {/* Firestore Rules Helper */}
+              <div className="mt-4 p-4 rounded-xl bg-[#111111] text-white space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <strong className="text-[#C5A880]">قواعد الأمان الجاهزة (Firestore Rules):</strong>
+                  <span className="text-[10px] text-gray-400">ملف firestore.rules موجود في المشروع</span>
+                </div>
+                <p className="text-[11px] text-gray-300">
+                  في Firebase Console &gt; Firestore Database &gt; تبويب Rules، الصق القواعد التالية لتسمح بالقراءة العامة والتعديل:
+                </p>
+                <pre className="bg-[#222222] p-3 rounded-lg text-[10px] font-mono text-emerald-400 overflow-x-auto text-left" dir="ltr">
+{`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}`}
+                </pre>
+              </div>
+            </div>
           </div>
         )}
       </div>
