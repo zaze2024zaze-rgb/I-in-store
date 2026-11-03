@@ -1,0 +1,6 @@
+{
+  "name": "I in - منصة الأزياء الراقية",
+  "description": "منصة تسوق أزياء وموضة راقية تحاكي نموذج شي ان بأعلى معايير الفخامة، الموثوقية، نظام الإيداع البنكي ومشاركة السلة عبر الواتساب مع لوحة تحكم متقدمة.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
