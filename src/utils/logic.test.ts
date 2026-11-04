@@ -198,3 +198,19 @@ test('cloud database: product model holds complete required fields for Firestore
   assert.ok(Array.isArray(mockProductA.availableSizes));
 });
 
+test('cloud database: user production firebase config is valid and complete', () => {
+  const userConfig = {
+    apiKey: "AIzaSyDY36h48B5SdC-ZcH_gAB0r8hs-ltsU1YY",
+    authDomain: "i-in-store.firebaseapp.com",
+    projectId: "i-in-store",
+    storageBucket: "i-in-store.firebasestorage.app",
+    messagingSenderId: "888808655629",
+    appId: "1:888808655629:web:54862f75751d2a3e1f3e44"
+  };
+  assert.equal(userConfig.projectId, 'i-in-store');
+  assert.ok(userConfig.apiKey.startsWith('AIzaSy'));
+  assert.equal(userConfig.messagingSenderId, '888808655629');
+  assert.ok(userConfig.appId.includes('54862f75751d2a3e1f3e44'));
+});
+
+

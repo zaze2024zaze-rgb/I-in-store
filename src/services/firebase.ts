@@ -25,10 +25,23 @@ export interface FirebaseConfig {
 const STORAGE_KEY_FIREBASE_CONFIG = 'iin_firebase_custom_config';
 
 /**
+ * Production Firebase Configuration provided by user for I in Store
+ */
+export const DEFAULT_BUILTIN_FIREBASE_CONFIG: FirebaseConfig = {
+  apiKey: "AIzaSyDY36h48B5SdC-ZcH_gAB0r8hs-ltsU1YY",
+  authDomain: "i-in-store.firebaseapp.com",
+  projectId: "i-in-store",
+  storageBucket: "i-in-store.firebasestorage.app",
+  messagingSenderId: "888808655629",
+  appId: "1:888808655629:web:54862f75751d2a3e1f3e44"
+};
+
+/**
  * Retrieve the active Firebase configuration.
  * Priority:
  * 1. Custom config entered by admin in the Dashboard (stored in localStorage)
  * 2. Vite environment variables (VITE_FIREBASE_*)
+ * 3. Default built-in user project configuration (i-in-store)
  */
 export function getActiveFirebaseConfig(): FirebaseConfig | null {
   // Check localStorage first
@@ -60,7 +73,8 @@ export function getActiveFirebaseConfig(): FirebaseConfig | null {
     };
   }
 
-  return null;
+  // Default to user's connected Firebase project
+  return DEFAULT_BUILTIN_FIREBASE_CONFIG;
 }
 
 /**

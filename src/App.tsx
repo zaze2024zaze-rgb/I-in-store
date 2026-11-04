@@ -15,6 +15,7 @@ import { UserProfileModal } from './components/UserProfileModal.tsx';
 import { HowItWorksModal } from './components/HowItWorksModal.tsx';
 import { AdminDashboard } from './components/AdminDashboard.tsx';
 import { AdminAuthModal } from './components/AdminAuthModal.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { 
   INITIAL_PRODUCTS, 
   INITIAL_BANNERS, 
@@ -368,7 +369,8 @@ export default function App() {
   });
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6] text-[#1A1A1A] flex flex-col font-sans selection:bg-[#C5A880]/30 selection:text-black">
+    <ErrorBoundary>
+      <div className="min-h-screen bg-[#FAF9F6] text-[#1A1A1A] flex flex-col font-sans selection:bg-[#C5A880]/30 selection:text-black">
       {/* Toast Notification Banner */}
       {toastNotification && (
         <div className="fixed bottom-5 left-5 z-50 bg-[#111111] text-[#FAF9F6] px-4 py-3 rounded-xl shadow-2xl border border-[#C5A880]/40 flex items-center gap-3 animate-fade-in max-w-md">
@@ -386,26 +388,28 @@ export default function App() {
 
       {/* Main Storefront vs Admin Mode */}
       {isAdminMode ? (
-        <AdminDashboard
-          products={products}
-          onUpdateProducts={setProducts}
-          banners={banners}
-          onUpdateBanners={setBanners}
-          orders={orders}
-          onUpdateOrders={setOrders}
-          coupons={coupons}
-          onUpdateCoupons={setCoupons}
-          banks={banks}
-          onUpdateBanks={setBanks}
-          reviews={reviews}
-          onUpdateReviews={setReviews}
-          auditLogs={auditLogs}
-          onAddAuditLog={(log) => setAuditLogs((prev) => [log, ...prev])}
-          settings={settings}
-          onUpdateSettings={setSettings}
-          onExitAdmin={() => setIsAdminMode(false)}
-          onBroadcastNotification={(msg) => setToastNotification(msg)}
-        />
+        <ErrorBoundary fallbackTitle="لوحة تحكم المشرف محمية" onReset={() => setIsAdminMode(false)}>
+          <AdminDashboard
+            products={products}
+            onUpdateProducts={setProducts}
+            banners={banners}
+            onUpdateBanners={setBanners}
+            orders={orders}
+            onUpdateOrders={setOrders}
+            coupons={coupons}
+            onUpdateCoupons={setCoupons}
+            banks={banks}
+            onUpdateBanks={setBanks}
+            reviews={reviews}
+            onUpdateReviews={setReviews}
+            auditLogs={auditLogs}
+            onAddAuditLog={(log) => setAuditLogs((prev) => [log, ...prev])}
+            settings={settings}
+            onUpdateSettings={setSettings}
+            onExitAdmin={() => setIsAdminMode(false)}
+            onBroadcastNotification={(msg) => setToastNotification(msg)}
+          />
+        </ErrorBoundary>
       ) : (
         <>
           {/* Header */}
@@ -762,6 +766,7 @@ export default function App() {
         correctPin={settings.adminPin}
         onAuthenticate={() => setIsAdminMode(true)}
       />
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 }

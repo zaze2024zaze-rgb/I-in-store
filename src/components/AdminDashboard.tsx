@@ -35,7 +35,8 @@ import {
   AlertCircle,
   CheckCircle2,
   ExternalLink,
-  Copy
+  Copy,
+  Building2
 } from 'lucide-react';
 import { 
   Product, 
