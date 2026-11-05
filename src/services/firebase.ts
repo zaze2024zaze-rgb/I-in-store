@@ -11,7 +11,7 @@ import {
   Firestore,
   Unsubscribe,
 } from 'firebase/firestore';
-import { Product, StoreSettings } from '../types.ts';
+import { Product, StoreSettings, BannerItem } from '../types.ts';
 
 export interface FirebaseConfig {
   apiKey: string;
@@ -311,3 +311,102 @@ export function subscribeToSettings(
     return null;
   }
 }
+
+/**
+ * Real-time listener for banners collection.
+ * Triggers callback whenever any top square banner is added, updated, or removed.
+ */
+export function subscribeToBanners(
+  onUpdate: (banners: BannerItem[]) => void,
+  onError?: (error: Error) => void
+): Unsubscribe | null {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  try {
+    const bannersCol = collection(db, 'banners');
+    const unsubscribe = onSnapshot(
+      bannersCol,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const list: BannerItem[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            list.push({
+              ...(data as BannerItem),
+              id: docSnap.id,
+            });
+          });
+          onUpdate(list);
+        }
+      },
+      (error) => {
+        console.warn('Firestore banners snapshot error:', error);
+        if (onError) onError(error);
+      }
+    );
+    return unsubscribe;
+  } catch (err: any) {
+    console.warn('Failed to subscribe to banners:', err);
+    if (onError) onError(err);
+    return null;
+  }
+}
+
+/**
+ * Save or update a square hero banner in Firestore cloud
+ */
+export async function saveBannerToCloud(banner: BannerItem): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+
+  try {
+    const docRef = doc(db, 'banners', banner.id);
+    await setDoc(docRef, { ...banner }, { merge: true });
+    return true;
+  } catch (error) {
+    console.error('Failed to save banner to cloud:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a banner from Firestore cloud
+ */
+export async function deleteBannerFromCloud(bannerId: string): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+
+  try {
+    const docRef = doc(db, 'banners', bannerId);
+    await deleteDoc(docRef);
+    return true;
+  } catch (error) {
+    console.error('Failed to delete banner from cloud:', error);
+    throw error;
+  }
+}
+
+/**
+ * Upload all current banners to Firestore cloud in one batch
+ */
+export async function syncAllBannersToCloud(banners: BannerItem[]): Promise<number> {
+  const { db } = initFirebase();
+  if (!db) throw new Error('قاعدة بيانات Firebase غير مهيأة.');
+
+  try {
+    const batch = writeBatch(db);
+    let count = 0;
+    for (const b of banners) {
+      const docRef = doc(db, 'banners', b.id);
+      batch.set(docRef, b, { merge: true });
+      count++;
+    }
+    await batch.commit();
+    return count;
+  } catch (error) {
+    console.error('Batch sync banners error:', error);
+    throw error;
+  }
+}
+

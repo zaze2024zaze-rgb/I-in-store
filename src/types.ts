@@ -182,4 +182,6 @@ export interface StoreSettings {
   productCardLayout?: 'standard' | 'compact';         // نمط عرض مربعات المنتجات
   defaultSaleBadgeText?: string;                      // نص العرض التلقائي
   defaultUrgencyBadgeText?: string;                   // نص العرض المحدود التلقائي
+  showHorizontalProductSlider?: boolean;              // تفعيل مربعات المنتجات التي تسحب جانبياً
+  horizontalSliderTitle?: string;                     // عنوان قسم مربعات المنتجات الجانبية
 }

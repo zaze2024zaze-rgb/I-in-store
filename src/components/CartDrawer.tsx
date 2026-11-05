@@ -14,7 +14,9 @@ import {
   ShieldCheck,
   AlertCircle,
   Camera,
-  FileCheck
+  FileCheck,
+  Plus,
+  RefreshCw
 } from 'lucide-react';
 import { CartItem, Coupon, Order, CurrencyType, StoreSettings, BankAccount } from '../types.ts';
 import { calculateCartTotals, formatCurrencyLabel, convertSARtoCurrency } from '../utils/pricing.ts';
@@ -30,7 +32,7 @@ interface CartDrawerProps {
   onUpdateQuantity: (itemId: string, newQty: number) => void;
   onRemoveItem: (itemId: string) => void;
   onClearCart: () => void;
-  onOrderCreated: (order: Order) => void;
+  onOrderCreated: (order: Order, clearCart?: boolean) => void;
   settings?: StoreSettings;
   banks?: BankAccount[];
   coupons?: Coupon[];
@@ -69,6 +71,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const [depositNotes, setDepositNotes] = useState<string>('');
   const [uploadedReceiptName, setUploadedReceiptName] = useState<string>('');
   const [copiedBankId, setCopiedBankId] = useState<string | null>(null);
+
+  const [orderSentSuccess, setOrderSentSuccess] = useState<{
+    orderNumber: string;
+    url: string;
+    itemCount: number;
+  } | null>(null);
 
   const [formError, setFormError] = useState<string>('');
 
@@ -155,10 +163,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       updatedAt: new Date().toISOString(),
     };
 
-    onOrderCreated(newOrder);
+    // User request: Allow adding multiple products and repeated sharing without forced cart clearing
+    onOrderCreated(newOrder, false);
 
     const url = generateWhatsAppDirectLink(items, totals, orderDetails);
     window.open(url, '_blank', 'noopener,noreferrer');
+
+    setOrderSentSuccess({
+      orderNumber,
+      url,
+      itemCount: items.length,
+    });
   };
 
   return (
@@ -224,6 +239,35 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Order Sent / Re-share Success Banner */}
+          {orderSentSuccess && (
+            <div className="bg-[#E8F5E9] border border-[#2E7D32]/40 p-4 rounded-xl text-xs space-y-2.5 shadow-sm animate-fade-in">
+              <div className="flex items-center gap-2 text-[#1B5E20] font-bold">
+                <Check className="w-5 h-5 text-[#2E7D32] shrink-0" />
+                <span>تم فتح الواتساب بنجاح لمشاركة {orderSentSuccess.itemCount} منتجات</span>
+              </div>
+              <p className="text-[11px] text-[#2E7D32] leading-relaxed">
+                رقم الطلب: <strong className="font-mono text-[#111111]">{orderSentSuccess.orderNumber}</strong>. محتويات سلتك محفوظة ولم يتم مسحها، لتتمكن من إضافة قطع أخرى أو مشاركة السلة مجدداً متى شئت.
+              </p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  onClick={() => window.open(orderSentSuccess.url, '_blank', 'noopener,noreferrer')}
+                  className="flex-1 bg-[#25D366] hover:bg-[#20BD5A] text-white py-2 px-2.5 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>إعادة المشاركة بالواتساب</span>
+                </button>
+                <button
+                  onClick={onClose}
+                  className="flex-1 bg-[#111111] hover:bg-[#333333] text-white py-2 px-2.5 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 text-[#C5A880]" />
+                  <span>إضافة منتجات أخرى للسلة</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {items.length === 0 ? (
             <div className="text-center py-24 space-y-4">
               <div className="w-16 h-16 mx-auto rounded-full bg-[#FAF8F5] border border-[#EFECE6] flex items-center justify-center text-[#888888]">
@@ -243,8 +287,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           ) : activeTab === 'cart' ? (
             /* Items List Tab */
             <div className="space-y-4">
-              <div className="flex justify-between items-center text-xs text-[#777777]">
-                <span>راجع المقاسات والكميات قبل الإرسال للمشرف:</span>
+              <div className="flex justify-between items-center text-xs text-[#777777] bg-[#F7F5F0] p-2.5 rounded-lg border border-[#EDE8DC]">
+                <button
+                  onClick={onClose}
+                  className="text-[#111111] font-bold hover:text-[#8B6B3F] flex items-center gap-1.5 cursor-pointer text-xs"
+                >
+                  <Plus className="w-3.5 h-3.5 text-[#8B6B3F]" />
+                  <span>+ إضافة منتجات أخرى (متابعة التصفح)</span>
+                </button>
                 <button
                   onClick={onClearCart}
                   className="text-[#A34E36] hover:underline flex items-center gap-1 cursor-pointer text-[11px]"

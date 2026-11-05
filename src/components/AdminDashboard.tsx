@@ -61,6 +61,9 @@ import {
   syncAllProductsToCloud,
   saveProductToCloud,
   deleteProductFromCloud,
+  saveBannerToCloud,
+  deleteBannerFromCloud,
+  syncAllBannersToCloud,
   saveSettingsToCloud,
   isCloudConfigured,
   FirebaseConfig
@@ -241,6 +244,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [productCardLayoutInput, setProductCardLayoutInput] = useState<'standard' | 'compact'>(settings.productCardLayout || 'standard');
   const [defaultSaleBadgeTextInput, setDefaultSaleBadgeTextInput] = useState(settings.defaultSaleBadgeText || 'خصم 25% اليوم فقط');
   const [defaultUrgencyBadgeTextInput, setDefaultUrgencyBadgeTextInput] = useState(settings.defaultUrgencyBadgeText || 'عرض حصري محدود ⏳');
+  const [showHorizontalSliderInput, setShowHorizontalSliderInput] = useState(settings.showHorizontalProductSlider ?? true);
+  const [horizontalSliderTitleInput, setHorizontalSliderTitleInput] = useState(settings.horizontalSliderTitle || 'مختارات حصرية تُسحب جانبياً ✨');
+  const [cloudBannerSyncResult, setCloudBannerSyncResult] = useState<string | null>(null);
+  const [cloudBannerSyncing, setCloudBannerSyncing] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
 
   // Banner CRUD
@@ -303,11 +310,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         isActive: true,
       };
       onUpdateBanners([...banners, newBanner]);
+      if (isCloudConfigured()) {
+        saveBannerToCloud(newBanner).catch((err) => console.warn('Cloud banner add notice:', err));
+      }
       onAddAuditLog(createAuditLogEntry('إضافة مربع عرض علوي جديد', newBanner.title, `العرض: ${newBanner.badgeText}`));
     } else if (editingBanner) {
+      let savedBannerObj: BannerItem | null = null;
       const updated = banners.map((b) => {
         if (b.id === editingBanner.id) {
-          return {
+          const modBanner: BannerItem = {
             ...b,
             title: sanitizeInput(bannerTitle),
             subtitle: sanitizeInput(bannerSubtitle),
@@ -316,10 +327,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             image: bannerImage || b.image,
             category: bannerCategory,
           };
+          savedBannerObj = modBanner;
+          return modBanner;
         }
         return b;
       });
       onUpdateBanners(updated);
+      if (savedBannerObj && isCloudConfigured()) {
+        saveBannerToCloud(savedBannerObj).catch((err) => console.warn('Cloud banner update notice:', err));
+      }
       onAddAuditLog(createAuditLogEntry('تعديل مربع عرض علوي', bannerTitle, `تحديث النصوص والعروض`));
     }
     setEditingBanner(null);
@@ -331,8 +347,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const handleToggleBannerActive = (bannerId: string) => {
-    const updated = banners.map((b) => (b.id === bannerId ? { ...b, isActive: !b.isActive } : b));
+    let toggledBanner: BannerItem | null = null;
+    const updated = banners.map((b) => {
+      if (b.id === bannerId) {
+        const mod = { ...b, isActive: !b.isActive };
+        toggledBanner = mod;
+        return mod;
+      }
+      return b;
+    });
     onUpdateBanners(updated);
+    if (toggledBanner && isCloudConfigured()) {
+      saveBannerToCloud(toggledBanner).catch((err) => console.warn('Cloud banner toggle notice:', err));
+    }
   };
 
   // Safe Deletion Executor (Replaces window.confirm for iframe safety)
@@ -355,6 +382,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       onAddAuditLog(createAuditLogEntry('حذف مربع عرض', title, `كود المربع: ${id}`));
       if (editingBanner && editingBanner.id === id) {
         setEditingBanner(null);
+      }
+      if (isCloudConfigured()) {
+        deleteBannerFromCloud(id).catch((err) => console.warn('Cloud banner deletion note:', err));
       }
     } else if (type === 'coupon') {
       onUpdateCoupons(coupons.filter((c) => c.code !== id));
@@ -720,6 +750,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       productCardLayout: productCardLayoutInput,
       defaultSaleBadgeText: defaultSaleBadgeTextInput.trim() || 'خصم 25% اليوم فقط',
       defaultUrgencyBadgeText: defaultUrgencyBadgeTextInput.trim() || 'عرض حصري محدود ⏳',
+      showHorizontalProductSlider: showHorizontalSliderInput,
+      horizontalSliderTitle: horizontalSliderTitleInput.trim() || 'مختارات حصرية تُسحب جانبياً ✨',
       loyaltyPointsRate: 1,
     };
 
@@ -1292,6 +1324,44 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               </div>
 
+              {/* Horizontal Product Slider Controls */}
+              <div className="bg-[#FAF8F5] p-5 rounded-2xl border border-[#E5DFD7] space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-[#8B6B3F]" />
+                    <strong className="text-xs font-bold text-[#111111]">
+                      مربعات المنتجات التي تسحب جانبياً (Horizontal Swipe Carousel):
+                    </strong>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={showHorizontalSliderInput}
+                      onChange={(e) => setShowHorizontalSliderInput(e.target.checked)}
+                      className="w-4 h-4 accent-[#111111]"
+                    />
+                    <span>تفعيل شريط السحب الجانبي</span>
+                  </label>
+                </div>
+
+                <p className="text-[11px] text-[#666666]">
+                  مربعات منتجات مميزة تظهر في واجهة المتجر قابلة للسحب أفقياً وجانبياً باللمس أو الأسهم:
+                </p>
+
+                <div>
+                  <label className="block text-[#444444] font-bold mb-1">
+                    عنوان قسم مربعات السحب الجانبي:
+                  </label>
+                  <input
+                    type="text"
+                    value={horizontalSliderTitleInput}
+                    onChange={(e) => setHorizontalSliderTitleInput(e.target.value)}
+                    placeholder="مختارات حصرية تُسحب جانبياً ✨..."
+                    className="w-full bg-white border border-[#D5CFC7] rounded-xl px-3.5 py-2 text-xs text-[#111111]"
+                  />
+                </div>
+              </div>
+
               {/* Secure Admin Secret PIN Change */}
               <div className="bg-[#FAF8F5] p-5 rounded-2xl border border-[#E5DFD7] space-y-3">
                 <div className="flex items-center justify-between">
@@ -1386,14 +1456,55 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <p className="text-xs text-[#777777]">يمكنك إضافة مربعات جديدة، تعديل نصوص الخصومات، أو حذف أي مربع فورياً</p>
               </div>
 
-              <button
-                onClick={startCreateBanner}
-                className="flex items-center gap-2 bg-[#111111] text-white hover:bg-[#333333] px-4 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-sm"
-              >
-                <Plus className="w-4 h-4 text-[#C5A880]" />
-                <span>إضافة مربع عرض جديد</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!isCloudConfigured()) {
+                      setCloudBannerSyncResult('يرجى حفظ إعدادات السحابة أولاً قبل المزامنة.');
+                      return;
+                    }
+                    setCloudBannerSyncing(true);
+                    setCloudBannerSyncResult(null);
+                    try {
+                      const count = await syncAllBannersToCloud(banners);
+                      setCloudBannerSyncResult(`✓ تم بنجاح مزامنة ${count} مربعات عروض إلى Firebase السحابية! ستتحدث الآن لدى كافة الزوار فوراً.`);
+                      onAddAuditLog(createAuditLogEntry('مزامنة مربعات العروض إلى السحابة', `${count} مربع`, 'رفع كافة مربعات العروض الحالية إلى Firestore'));
+                    } catch (err: any) {
+                      setCloudBannerSyncResult(`تعذرت المزامنة: ${err.message || 'خطأ في الاتصال'}`);
+                    } finally {
+                      setCloudBannerSyncing(false);
+                    }
+                  }}
+                  disabled={cloudBannerSyncing}
+                  className="flex items-center gap-1.5 px-4 py-2.5 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-300 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                  title="مزامنة كافة مربعات العروض العلوية إلى قاعدة البيانات السحابية"
+                >
+                  <Database className="w-4 h-4 text-emerald-600" />
+                  <span>{cloudBannerSyncing ? 'جاري المزامنة...' : 'مزامنة المربعات إلى السحابة فوراً'}</span>
+                </button>
+
+                <button
+                  onClick={startCreateBanner}
+                  className="flex items-center gap-2 bg-[#111111] text-white hover:bg-[#333333] px-4 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-sm"
+                >
+                  <Plus className="w-4 h-4 text-[#C5A880]" />
+                  <span>إضافة مربع عرض جديد</span>
+                </button>
+              </div>
             </div>
+
+            {cloudBannerSyncResult && (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold flex items-center justify-between">
+                <span>{cloudBannerSyncResult}</span>
+                <button
+                  onClick={() => setCloudBannerSyncResult(null)}
+                  className="text-emerald-700 hover:text-emerald-900 cursor-pointer p-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
 
             {/* Banner Form Modal / Inline Editor */}
             {(isCreatingBanner || editingBanner) && (
@@ -2910,23 +3021,58 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               )}
 
-              {/* One-click Sync / Seed Button */}
-              <div className="pt-2 border-t border-[#EFECE6] flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h4 className="text-xs font-bold text-[#111111]">مزامنة المنتجات الحالية ({products.length} منتج)</h4>
-                  <p className="text-[11px] text-[#777777]">
-                    رفع كافة المنتجات المعروضة حالياً إلى قاعدة البيانات السحابية بضغطة زر واحدة.
-                  </p>
+              {/* One-click Sync / Seed Buttons for Products & Banners */}
+              <div className="pt-2 border-t border-[#EFECE6] space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-xs font-bold text-[#111111]">مزامنة المنتجات الحالية ({products.length} منتج)</h4>
+                    <p className="text-[11px] text-[#777777]">
+                      رفع كافة المنتجات المعروضة حالياً إلى قاعدة البيانات السحابية بضغطة زر واحدة.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSyncAllToCloud}
+                    disabled={cloudSyncing}
+                    className="flex items-center gap-1.5 px-4 py-2.5 bg-[#8B6B3F] hover:bg-[#72562F] text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                  >
+                    <Upload className={`w-3.5 h-3.5 ${cloudSyncing ? 'animate-bounce' : ''}`} />
+                    <span>{cloudSyncing ? 'جاري الرفع والمزامنة...' : `مزامنة ${products.length} منتج إلى السحابة فوراً`}</span>
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleSyncAllToCloud}
-                  disabled={cloudSyncing}
-                  className="flex items-center gap-1.5 px-4 py-2.5 bg-[#8B6B3F] hover:bg-[#72562F] text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm disabled:opacity-50"
-                >
-                  <Upload className={`w-3.5 h-3.5 ${cloudSyncing ? 'animate-bounce' : ''}`} />
-                  <span>{cloudSyncing ? 'جاري الرفع والمزامنة...' : `مزامنة ${products.length} منتج إلى السحابة فوراً`}</span>
-                </button>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[#F2ECE3]">
+                  <div>
+                    <h4 className="text-xs font-bold text-[#111111]">مزامنة مربعات العروض العلوية ({banners.length} مربعات)</h4>
+                    <p className="text-[11px] text-[#777777]">
+                      رفع ومزامنة كافة مربعات العروض العلوية إلى Firestore لتظهر لجميع الزوار فورياً.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!isCloudConfigured()) {
+                        setCloudSyncResult('يرجى حفظ إعدادات السحابة أولاً.');
+                        return;
+                      }
+                      setCloudBannerSyncing(true);
+                      try {
+                        const count = await syncAllBannersToCloud(banners);
+                        setCloudSyncResult(`✓ تم بنجاح مزامنة ${count} مربعات عروض إلى السحابة!`);
+                        onAddAuditLog(createAuditLogEntry('مزامنة مربعات العروض إلى السحابة', `${count} مربع`, 'رفع كافة مربعات العروض إلى Firestore'));
+                      } catch (err: any) {
+                        setCloudSyncResult(`تعذرت المزامنة: ${err.message}`);
+                      } finally {
+                        setCloudBannerSyncing(false);
+                      }
+                    }}
+                    disabled={cloudBannerSyncing}
+                    className="flex items-center gap-1.5 px-4 py-2.5 bg-[#111111] hover:bg-[#2A2A2A] text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                  >
+                    <Upload className={`w-3.5 h-3.5 ${cloudBannerSyncing ? 'animate-bounce' : ''}`} />
+                    <span>{cloudBannerSyncing ? 'جاري مزامنة المربعات...' : `مزامنة ${banners.length} مربعات عروض إلى السحابة`}</span>
+                  </button>
+                </div>
               </div>
             </div>
 

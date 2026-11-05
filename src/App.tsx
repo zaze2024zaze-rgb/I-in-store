@@ -16,6 +16,7 @@ import { HowItWorksModal } from './components/HowItWorksModal.tsx';
 import { AdminDashboard } from './components/AdminDashboard.tsx';
 import { AdminAuthModal } from './components/AdminAuthModal.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import { HorizontalProductSlider } from './components/HorizontalProductSlider.tsx';
 import { 
   INITIAL_PRODUCTS, 
   INITIAL_BANNERS, 
@@ -50,13 +51,15 @@ import {
   X,
   Lock,
   Grid,
-  Layers
+  Layers,
+  ShoppingBag
 } from 'lucide-react';
 import { OFFICIAL_WHATSAPP_NUMBER } from './utils/whatsapp.ts';
 import { formatCurrencyLabel, convertSARtoCurrency } from './utils/pricing.ts';
 import { 
   subscribeToProducts, 
   subscribeToSettings, 
+  subscribeToBanners,
   isCloudConfigured 
 } from './services/firebase.ts';
 
@@ -102,13 +105,16 @@ const DEFAULT_SETTINGS: StoreSettings = {
   productCardLayout: 'standard',
   defaultSaleBadgeText: 'خصم 25% اليوم فقط',
   defaultUrgencyBadgeText: 'عرض حصري محدود ⏳',
+  showHorizontalProductSlider: true,
+  horizontalSliderTitle: 'مختارات حصرية تُسحب جانبياً ✨',
 };
 
 export default function App() {
-  // Store Settings (Persistent in localStorage)
-  const [settings, setSettings] = useState<StoreSettings>(() =>
-    loadFromStorage('iin_store_settings', DEFAULT_SETTINGS)
-  );
+  // Store Settings (Persistent in localStorage, merged with defaults)
+  const [settings, setSettings] = useState<StoreSettings>(() => {
+    const loaded = loadFromStorage('iin_store_settings', DEFAULT_SETTINGS);
+    return { ...DEFAULT_SETTINGS, ...loaded };
+  });
 
   // Current selected currency (SAR or YER)
   const [currency, setCurrency] = useState<CurrencyType>('SAR');
@@ -215,6 +221,7 @@ export default function App() {
   useEffect(() => {
     let unsubscribeProducts: (() => void) | null = null;
     let unsubscribeSettings: (() => void) | null = null;
+    let unsubscribeBanners: (() => void) | null = null;
 
     try {
       unsubscribeProducts = subscribeToProducts((cloudProducts) => {
@@ -228,6 +235,12 @@ export default function App() {
           setSettings((prev) => ({ ...prev, ...cloudSettings }));
         }
       });
+
+      unsubscribeBanners = subscribeToBanners((cloudBanners) => {
+        if (cloudBanners && cloudBanners.length > 0) {
+          setBanners(cloudBanners);
+        }
+      });
     } catch (err) {
       console.warn('Real-time cloud sync subscription notice:', err);
     }
@@ -235,6 +248,7 @@ export default function App() {
     return () => {
       if (unsubscribeProducts) unsubscribeProducts();
       if (unsubscribeSettings) unsubscribeSettings();
+      if (unsubscribeBanners) unsubscribeBanners();
     };
   }, []);
 
@@ -267,13 +281,15 @@ export default function App() {
     }
   }, [toastNotification]);
 
-  // Cart Handlers
+  // Cart Handlers - Multi-product additions without interrupting browsing
   const handleAddToCart = (
     product: Product,
     size: string = (product.availableSizes[0] || 'M'),
     color: string = product.availableColors[0]?.name || 'افتراضي',
-    quantity: number = 1
+    quantity: number = 1,
+    openDrawer: boolean = false
   ) => {
+    let currentTotalCount = 0;
     setCartItems((prev) => {
       const existingIndex = prev.findIndex(
         (it) => it.productId === product.id && it.selectedSize === size && it.selectedColor === color
@@ -281,6 +297,7 @@ export default function App() {
       if (existingIndex > -1) {
         const next = [...prev];
         next[existingIndex].quantity += quantity;
+        currentTotalCount = next.reduce((sum, item) => sum + item.quantity, 0);
         return next;
       } else {
         const newItem: CartItem = {
@@ -292,12 +309,16 @@ export default function App() {
           quantity,
           unitPriceSAR: product.priceSAR,
         };
-        return [...prev, newItem];
+        const next = [...prev, newItem];
+        currentTotalCount = next.reduce((sum, item) => sum + item.quantity, 0);
+        return next;
       }
     });
 
-    setToastNotification(`تمت إضافة "${product.title}" إلى السلة بنجاح!`);
-    setIsCartOpen(true);
+    setToastNotification(`تمت إضافة "${product.title}" إلى السلة (${(cartItems.reduce((acc, it) => acc + it.quantity, 0) + quantity)} قطع بالسلة) ✨`);
+    if (openDrawer) {
+      setIsCartOpen(true);
+    }
   };
 
   const handleUpdateCartQuantity = (itemId: string, newQty: number) => {
@@ -330,11 +351,13 @@ export default function App() {
     });
   };
 
-  const handleOrderCreated = (order: Order) => {
+  const handleOrderCreated = (order: Order, clearCart: boolean = false) => {
     setOrders((prev) => [order, ...prev]);
-    setToastNotification(`تم تسجيل طلبك برقم ${order.orderNumber} وإرساله للمشرف عبر الواتساب.`);
-    setCartItems([]);
-    setIsCartOpen(false);
+    setToastNotification(`تم تسجيل طلبك برقم ${order.orderNumber} وتجهيز مشاركته عبر الواتساب.`);
+    if (clearCart) {
+      setCartItems([]);
+      setIsCartOpen(false);
+    }
   };
 
   // Filtered Products
@@ -499,6 +522,21 @@ export default function App() {
                 </div>
               </div>
             </section>
+
+            {/* Horizontal Product Slider (User request: مربعات منتجات يمكن سحبها جانبياً) */}
+            {settings.showHorizontalProductSlider !== false && (
+              <HorizontalProductSlider
+                products={products}
+                title={settings.horizontalSliderTitle || 'مختارات حصرية تُسحب جانبياً ✨'}
+                currency={currency}
+                yerRate={settings.yerToSarRate}
+                onAddToCart={(prod, sz, clr, qty) => handleAddToCart(prod, sz, clr, qty, false)}
+                onSelectProduct={(prod) => setSelectedProduct(prod)}
+                onOpenSlideOver={(prod) => setSlideOverProduct(prod)}
+                isWishlisted={(pId) => wishlist.some((w) => w.id === pId)}
+                onToggleWishlist={handleToggleWishlist}
+              />
+            )}
 
             {/* Catalog Section */}
             <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -766,6 +804,34 @@ export default function App() {
         correctPin={settings.adminPin}
         onAuthenticate={() => setIsAdminMode(true)}
       />
+
+      {/* Floating Multi-Product Cart Bar (User request: إضافة أكثر من منتج ومشاركتها) */}
+      {cartItems.length > 0 && !isCartOpen && !isAdminMode && (
+        <div className="fixed bottom-5 left-4 sm:left-6 z-40 animate-fade-in">
+          <button
+            onClick={() => setIsCartOpen(true)}
+            className="flex items-center gap-3 bg-[#111111] hover:bg-[#2A2A2A] text-white px-4 py-3 rounded-2xl shadow-2xl border border-[#C5A880]/50 transition-all transform hover:scale-105 cursor-pointer group"
+            aria-label="عرض سلة المشتريات ومشاركتها"
+          >
+            <div className="relative">
+              <ShoppingBag className="w-5 h-5 text-[#C5A880]" />
+              <span className="absolute -top-2 -right-2 bg-[#A34E36] text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center font-mono">
+                {cartItems.reduce((acc, it) => acc + it.quantity, 0)}
+              </span>
+            </div>
+            <div className="text-right text-xs">
+              <div className="font-bold flex items-center gap-1.5">
+                <span>سلة المشتريات</span>
+                <span className="text-[#C5A880] font-mono">({cartItems.length} منتجات)</span>
+              </div>
+              <div className="text-[10px] text-gray-300">
+                انقر للمراجعة والمشاركة عبر الواتساب
+              </div>
+            </div>
+            <div className="w-2 h-2 rounded-full bg-[#25D366] animate-ping ml-1" />
+          </button>
+        </div>
+      )}
       </div>
     </ErrorBoundary>
   );

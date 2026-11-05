@@ -213,4 +213,97 @@ test('cloud database: user production firebase config is valid and complete', ()
   assert.ok(userConfig.appId.includes('54862f75751d2a3e1f3e44'));
 });
 
+test('multi-product cart: supports adding multiple distinct items with correct totals', () => {
+  const mockProductB: Product = {
+    ...mockProductA,
+    id: 'prod_2',
+    title: 'عطر العود الملكي المعتمد',
+    priceSAR: 150,
+    code: 'IN-5432'
+  };
+  const mockProductC: Product = {
+    ...mockProductA,
+    id: 'prod_3',
+    title: 'حقيبة يد مخملية فاخرة',
+    priceSAR: 220,
+    code: 'IN-7890'
+  };
+
+  const multiCart: CartItem[] = [
+    {
+      id: 'item_1',
+      productId: 'prod_1',
+      product: mockProductA,
+      selectedColor: 'شامبين',
+      selectedSize: 'M',
+      quantity: 1,
+      unitPriceSAR: 300,
+    },
+    {
+      id: 'item_2',
+      productId: 'prod_2',
+      product: mockProductB,
+      selectedColor: 'ذهبي',
+      selectedSize: '100ml',
+      quantity: 2,
+      unitPriceSAR: 150,
+    },
+    {
+      id: 'item_3',
+      productId: 'prod_3',
+      product: mockProductC,
+      selectedColor: 'أسود',
+      selectedSize: 'قياسي',
+      quantity: 1,
+      unitPriceSAR: 220,
+    },
+  ];
+
+  // Total SAR = 300*1 + 150*2 + 220*1 = 820 SAR (> 400 free shipping)
+  const totals = calculateCartTotals(multiCart, null, 'SAR');
+  assert.equal(totals.subtotalSAR, 820);
+  assert.equal(totals.freeShippingQualified, true);
+  assert.equal(totals.shippingFeeSAR, 0);
+  assert.equal(totals.totalSAR, 820);
+
+  // Check WhatsApp message contains ALL 3 items
+  const details = {
+    orderNumber: 'IN-99441',
+    customerName: 'سارة عبد الله',
+    customerPhone: '+967784935535',
+    customerCity: 'صنعاء',
+    paymentMethod: 'whatsapp_order' as const,
+    currency: 'SAR' as const,
+  };
+  const message = buildWhatsAppCartMessage(multiCart, totals, details);
+  assert.ok(message.includes('محتويات السلة (3 منتجات)'));
+  assert.ok(message.includes('فستان حرير شامبين فاخر'));
+  assert.ok(message.includes('عطر العود الملكي المعتمد'));
+  assert.ok(message.includes('حقيبة يد مخملية فاخرة'));
+  assert.ok(message.includes('IN-5432'));
+  assert.ok(message.includes('IN-7890'));
+  assert.ok(message.includes('المبلغ الإجمالي المطلوب سداده'));
+  assert.ok(message.includes('ر.س'));
+});
+
+test('banners: data structure conforms to cloud Firestore specifications', () => {
+  const sampleBanner = {
+    id: 'b_hero_1',
+    title: 'كولكشن الصيف الحصري',
+    subtitle: 'أزياء راقية وتصاميم مميزة',
+    tag: 'جديد ومحدود',
+    image: 'https://images.unsplash.com/photo-1',
+    category: 'dresses' as const,
+    badgeColor: '#C5A880',
+    isActive: true,
+    displayOrder: 1,
+  };
+
+  assert.ok(sampleBanner.id);
+  assert.ok(sampleBanner.title);
+  assert.ok(sampleBanner.image);
+  assert.equal(sampleBanner.isActive, true);
+  assert.equal(typeof sampleBanner.displayOrder, 'number');
+});
+
 
