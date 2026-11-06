@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ShoppingBag, Heart, Search, Sparkles, ChevronDown, Grid, X } from 'lucide-react';
-import { ProductCategory, CurrencyType } from '../types.ts';
+import { ShoppingBag, Heart, Search, Sparkles, ChevronDown, Grid, X, User } from 'lucide-react';
+import { ProductCategory, CurrencyType, CustomerAccount } from '../types.ts';
 
 export const TOP_DROPDOWN_CATEGORIES = [
   { id: 'perfumes', labelAr: 'العطور', labelEn: 'Perfumes', key: 'a' },
@@ -29,6 +29,8 @@ interface HeaderProps {
   onToggleCurrency: (curr: CurrencyType) => void;
   announcementText?: string;
   showAnnouncement?: boolean;
+  currentCustomer?: CustomerAccount | null;
+  onOpenCustomerAuth?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -47,6 +49,8 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleCurrency,
   announcementText = 'عروض حصرية لفترة محدودة | طلب مباشر وسريع عبر الواتساب (+967784935535)',
   showAnnouncement = true,
+  currentCustomer,
+  onOpenCustomerAuth,
 }) => {
   const [showSearchInput, setShowSearchInput] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -289,6 +293,32 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
           </div>
+
+          {/* Customer Account Button */}
+          {currentCustomer ? (
+            <button
+              onClick={onOpenProfile}
+              className="flex items-center gap-1.5 bg-white border border-[#D5CFC7] hover:border-[#111111] px-3 py-1.5 rounded-full text-xs font-bold text-[#111111] transition-all cursor-pointer shadow-xs"
+              title={`الملف الشخصي وتتبع الطلبات (${currentCustomer.name})`}
+            >
+              <div className="relative">
+                <User className="w-3.5 h-3.5 text-[#8B6B3F]" />
+                <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-[#2E7D32] rounded-full"></span>
+              </div>
+              <span className="hidden md:inline truncate max-w-[80px]">
+                {currentCustomer.name.split(' ')[0]}
+              </span>
+            </button>
+          ) : (
+            <button
+              onClick={onOpenCustomerAuth || onOpenProfile}
+              className="flex items-center gap-1.5 bg-white border border-[#D5CFC7] hover:border-[#111111] px-3 py-1.5 rounded-full text-xs font-bold text-[#111111] transition-all cursor-pointer shadow-xs"
+              title="تسجيل الدخول / إنشاء حساب عميل"
+            >
+              <User className="w-3.5 h-3.5 text-[#8B6B3F]" />
+              <span className="hidden sm:inline">حسابي</span>
+            </button>
+          )}
 
           {/* Wishlist */}
           <button

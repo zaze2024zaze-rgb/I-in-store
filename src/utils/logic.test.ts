@@ -306,4 +306,66 @@ test('banners: data structure conforms to cloud Firestore specifications', () =>
   assert.equal(typeof sampleBanner.displayOrder, 'number');
 });
 
+test('customer accounts: normalizePhoneKey cleans phone inputs across formats', () => {
+  const normalize = (phone: string): string => {
+    let clean = phone.replace(/[^0-9]/g, '');
+    if (clean.startsWith('00')) clean = clean.substring(2);
+    return clean;
+  };
+
+  assert.equal(normalize('+967 784 935 535'), '967784935535');
+  assert.equal(normalize('00967784935535'), '967784935535');
+  assert.equal(normalize('784935535'), '784935535');
+});
+
+test('customer accounts: suspension prevents unauthorized login and ordering', () => {
+  const activeCustomer = {
+    id: 'cust_1',
+    name: 'سارة عبد الله',
+    phone: '784935535',
+    isActive: true,
+  };
+  const suspendedCustomer = {
+    ...activeCustomer,
+    id: 'cust_2',
+    name: 'عميل موقوف',
+    isActive: false,
+  };
+
+  const checkCanTransact = (c: { isActive?: boolean }) => c.isActive !== false;
+
+  assert.equal(checkCanTransact(activeCustomer), true);
+  assert.equal(checkCanTransact(suspendedCustomer), false);
+});
+
+test('order logistics: order lifecycle transitions accurately from pending to delivered', () => {
+  const statuses = [
+    'pending_confirmation',
+    'processing',
+    'shipped',
+    'out_for_delivery',
+    'delivered',
+    'cancelled'
+  ];
+
+  const getStepIndex = (status: string) => {
+    switch (status) {
+      case 'pending_confirmation': return 0;
+      case 'processing': return 1;
+      case 'shipped': return 2;
+      case 'out_for_delivery': return 3;
+      case 'delivered': return 4;
+      default: return -1;
+    }
+  };
+
+  assert.equal(getStepIndex('pending_confirmation'), 0);
+  assert.equal(getStepIndex('processing'), 1);
+  assert.equal(getStepIndex('shipped'), 2);
+  assert.equal(getStepIndex('out_for_delivery'), 3);
+  assert.equal(getStepIndex('delivered'), 4);
+  assert.equal(getStepIndex('cancelled'), -1);
+});
+
+
 

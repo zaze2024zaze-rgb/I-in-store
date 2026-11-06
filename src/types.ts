@@ -40,6 +40,21 @@ export interface CustomerReview {
   helpfulCount: number;
 }
 
+export interface CustomerAccount {
+  id: string; // phone or unique id
+  name: string;
+  phone: string;
+  password?: string;
+  city?: string;
+  address?: string;
+  isActive: boolean; // تحكم المشرف: إيقاف أو تشغيل الحساب
+  createdAt: string;
+  lastLoginAt?: string;
+  cart?: CartItem[];
+  wishlist?: string[]; // IDs of products
+  notes?: string;
+}
+
 export interface AdminRating {
   score: number; // e.g. 9.8 / 10
   badgeLabel: string; // e.g. "مفحوص ومطابق للمواصفات"

@@ -36,7 +36,11 @@ import {
   CheckCircle2,
   ExternalLink,
   Copy,
-  Building2
+  Building2,
+  User,
+  UserCheck,
+  UserX,
+  Search
 } from 'lucide-react';
 import { 
   Product, 
@@ -49,7 +53,8 @@ import {
   StoreSettings, 
   ProductCategory,
   BankAccount,
-  CustomerReview
+  CustomerReview,
+  CustomerAccount
 } from '../types.ts';
 import { createAuditLogEntry, sanitizeInput } from '../utils/security.ts';
 import { formatCurrencyLabel } from '../utils/pricing.ts';
@@ -65,6 +70,8 @@ import {
   deleteBannerFromCloud,
   syncAllBannersToCloud,
   saveSettingsToCloud,
+  updateOrderStatusInCloud,
+  updateCustomerStatusInCloud,
   isCloudConfigured,
   FirebaseConfig
 } from '../services/firebase.ts';
@@ -82,6 +89,8 @@ interface AdminDashboardProps {
   onUpdateBanks?: (banks: BankAccount[]) => void;
   reviews?: CustomerReview[];
   onUpdateReviews?: (reviews: CustomerReview[]) => void;
+  customers?: CustomerAccount[];
+  onUpdateCustomers?: (customers: CustomerAccount[]) => void;
   auditLogs: AuditLog[];
   onAddAuditLog: (log: AuditLog) => void;
   settings: StoreSettings;
@@ -126,6 +135,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onUpdateBanks,
   reviews = [],
   onUpdateReviews,
+  customers = [],
+  onUpdateCustomers,
   auditLogs,
   onAddAuditLog,
   settings,
@@ -134,7 +145,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onBroadcastNotification,
 }) => {
   // Tabs
-  const [currentTab, setCurrentTab] = useState<'settings' | 'banners' | 'products' | 'banks' | 'reviews' | 'coupons' | 'orders' | 'notifications' | 'kpis' | 'audit' | 'cloud'>('settings');
+  const [currentTab, setCurrentTab] = useState<'settings' | 'banners' | 'products' | 'banks' | 'reviews' | 'coupons' | 'orders' | 'customers' | 'notifications' | 'kpis' | 'audit' | 'cloud'>('settings');
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [customerFilterStatus, setCustomerFilterStatus] = useState<'all' | 'active' | 'suspended'>('all');
 
   // Cloud Database state (Firebase Firestore)
   const [isCloudActive, setIsCloudActive] = useState<boolean>(() => isCloudConfigured());
@@ -602,8 +615,41 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       return o;
     });
     onUpdateOrders(updated);
+
+    // Sync to Cloud Firestore in real-time
+    updateOrderStatusInCloud(orderId, newStatus).catch((err) => {
+      console.warn('Could not sync order status to cloud immediately:', err);
+    });
+
     onAddAuditLog(
       createAuditLogEntry('تحديث حالة طلب', `طلب ${orderId}`, `الحالة الجديدة: ${newStatus}`)
+    );
+  };
+
+  const handleToggleCustomerStatus = (customer: CustomerAccount) => {
+    const nextStatus = customer.isActive === false; // toggle
+    const updatedList = customers.map((c) => {
+      if (c.phone === customer.phone || c.id === customer.id) {
+        return { ...c, isActive: nextStatus };
+      }
+      return c;
+    });
+
+    if (onUpdateCustomers) {
+      onUpdateCustomers(updatedList);
+    }
+
+    // Push to Cloud Firestore with full customer object preservation
+    updateCustomerStatusInCloud(customer.phone, nextStatus, customer).catch((err) => {
+      console.warn('Could not update customer status in cloud:', err);
+    });
+
+    onAddAuditLog(
+      createAuditLogEntry(
+        'تعديل حالة حساب عميل',
+        `${customer.name || customer.phone} (${customer.phone})`,
+        nextStatus ? 'تم تفعيل الحساب' : 'تم إيقاف/تعليق الحساب'
+      )
     );
   };
 
@@ -1023,6 +1069,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         >
           <ShoppingCart className="w-4 h-4 text-[#C5A880]" />
           <span>الطلبات والإيداعات ({orders.length})</span>
+        </button>
+
+        <button
+          onClick={() => setCurrentTab('customers')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all cursor-pointer ${
+            currentTab === 'customers' ? 'bg-[#111111] text-white shadow-sm' : 'bg-white text-[#666666] hover:bg-[#EAE6DE]'
+          }`}
+        >
+          <User className="w-4 h-4 text-[#C5A880]" />
+          <span>العملاء والحسابات ({customers.length})</span>
         </button>
 
         <button
@@ -2820,6 +2876,221 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Tab: Customers Management */}
+        {currentTab === 'customers' && (
+          <div className="space-y-4">
+            <div className="bg-white p-5 rounded-2xl border border-[#DCD5C9] flex flex-wrap justify-between items-center gap-4 shadow-sm">
+              <div>
+                <h3 className="text-base font-bold text-[#111111] flex items-center gap-2">
+                  <User className="w-5 h-5 text-[#8B6B3F]" />
+                  <span>إدارة حسابات العملاء وصلاحيات الدخول</span>
+                </h3>
+                <p className="text-xs text-[#777777]">
+                  عرض بيانات العملاء المسجلين، أرقام جوالاتهم، والتحكم بإيقاف أو تشغيل أي حساب فورياً
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono bg-[#111111] text-white px-3 py-1 rounded-full">
+                  إجمالي العملاء: {customers.length}
+                </span>
+                <span className="text-xs bg-[#E8F5E9] text-[#1B5E20] font-bold px-2.5 py-1 rounded-full border border-[#C8E6C9]">
+                  النشطين: {customers.filter(c => c.isActive !== false).length}
+                </span>
+                <span className="text-xs bg-[#FFEBEE] text-[#C62828] font-bold px-2.5 py-1 rounded-full border border-[#FFCDD2]">
+                  المعلقين: {customers.filter(c => c.isActive === false).length}
+                </span>
+              </div>
+            </div>
+
+            {/* Filter and Search Toolbar */}
+            <div className="bg-white p-4 rounded-2xl border border-[#DCD5C9] flex flex-wrap items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-center bg-[#FAF9F6] border border-[#D5CFC7] rounded-xl px-3 py-1.5 w-full sm:w-80">
+                <Search className="w-4 h-4 text-[#888888] shrink-0 ml-2" />
+                <input
+                  type="text"
+                  placeholder="ابحث بالاسم أو رقم الجوال أو المدينة..."
+                  value={customerSearchQuery}
+                  onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                  className="w-full text-xs bg-transparent focus:outline-none text-[#111111]"
+                />
+                {customerSearchQuery && (
+                  <button
+                    onClick={() => setCustomerSearchQuery('')}
+                    className="text-xs text-[#888888] hover:text-[#111111]"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-[#666666] ml-1">تصفية:</span>
+                <button
+                  onClick={() => setCustomerFilterStatus('all')}
+                  className={`px-3 py-1 rounded-lg transition-colors cursor-pointer ${
+                    customerFilterStatus === 'all'
+                      ? 'bg-[#111111] text-white font-bold'
+                      : 'bg-[#FAF9F6] text-[#666666] hover:bg-[#EFECE6]'
+                  }`}
+                >
+                  الكل ({customers.length})
+                </button>
+                <button
+                  onClick={() => setCustomerFilterStatus('active')}
+                  className={`px-3 py-1 rounded-lg transition-colors cursor-pointer ${
+                    customerFilterStatus === 'active'
+                      ? 'bg-[#2E7D32] text-white font-bold'
+                      : 'bg-[#FAF9F6] text-[#666666] hover:bg-[#EFECE6]'
+                  }`}
+                >
+                  النشطة فقط
+                </button>
+                <button
+                  onClick={() => setCustomerFilterStatus('suspended')}
+                  className={`px-3 py-1 rounded-lg transition-colors cursor-pointer ${
+                    customerFilterStatus === 'suspended'
+                      ? 'bg-[#C62828] text-white font-bold'
+                      : 'bg-[#FAF9F6] text-[#666666] hover:bg-[#EFECE6]'
+                  }`}
+                >
+                  المعلقة فقط
+                </button>
+              </div>
+            </div>
+
+            {/* Customers Table / Cards */}
+            <div className="space-y-3">
+              {customers
+                .filter((cust) => {
+                  const custName = cust.name || 'عميل المتجر';
+                  const custPhone = cust.phone || '';
+                  const matchQuery =
+                    !customerSearchQuery.trim() ||
+                    custName.toLowerCase().includes(customerSearchQuery.toLowerCase()) ||
+                    custPhone.includes(customerSearchQuery) ||
+                    (cust.city && cust.city.toLowerCase().includes(customerSearchQuery.toLowerCase())) ||
+                    (cust.id && cust.id.toLowerCase().includes(customerSearchQuery.toLowerCase()));
+
+                  const matchStatus =
+                    customerFilterStatus === 'all' ||
+                    (customerFilterStatus === 'active' && cust.isActive !== false) ||
+                    (customerFilterStatus === 'suspended' && cust.isActive === false);
+
+                  return matchQuery && matchStatus;
+                })
+                .map((cust) => {
+                  const isActive = cust.isActive !== false;
+                  const custName = cust.name || 'عميل المتجر';
+                  const custPhone = cust.phone || '';
+                  const initialChar = custName.trim() ? custName.trim().charAt(0) : 'ع';
+                  const regDate = cust.createdAt ? new Date(cust.createdAt).toLocaleDateString('ar-YE') : 'مؤخراً';
+                  return (
+                    <div
+                      key={cust.id || cust.phone}
+                      className={`p-5 rounded-2xl border transition-all shadow-sm ${
+                        isActive
+                          ? 'bg-white border-[#DCD5C9]'
+                          : 'bg-[#FFF8F8] border-[#FFCDD2]'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div className="flex items-center gap-3.5">
+                          <div
+                            className={`w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-sm shadow-xs ${
+                              isActive
+                                ? 'bg-[#111111] text-[#E5D3B3]'
+                                : 'bg-[#FFEBEE] text-[#C62828]'
+                            }`}
+                          >
+                            {initialChar}
+                          </div>
+
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm text-[#111111]">{custName}</span>
+                              <span className="font-mono text-[10px] bg-[#FAF9F6] border border-[#E5DFD7] px-2 py-0.5 rounded text-[#777777]">
+                                {cust.id || cust.phone}
+                              </span>
+                              {isActive ? (
+                                <span className="inline-flex items-center gap-1 bg-[#E8F5E9] text-[#1B5E20] border border-[#A5D6A7] text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                  <UserCheck className="w-3 h-3 text-[#2E7D32]" />
+                                  <span>حساب نشط ومفعّل</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 bg-[#FFEBEE] text-[#C62828] border border-[#FFCDD2] text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                  <UserX className="w-3 h-3 text-[#C62828]" />
+                                  <span>حساب معلق / موقوف</span>
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3 text-xs text-[#666666] mt-1">
+                              {custPhone && (
+                                <a
+                                  href={`https://wa.me/${custPhone.replace(/[^0-9]/g, '')}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="font-mono text-[#111111] hover:text-[#25D366] font-bold flex items-center gap-1"
+                                >
+                                  <span>{custPhone}</span>
+                                </a>
+                              )}
+                              {cust.city && <span>المدينة: <strong>{cust.city}</strong></span>}
+                              {cust.address && <span className="text-[11px] text-[#777777]">({cust.address})</span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Customer Controls */}
+                        <div className="flex items-center gap-3">
+                          <div className="text-left text-[11px] text-[#777777] hidden md:block">
+                            <div>تاريخ التسجيل: {regDate}</div>
+                            <div>
+                              سلة التسوق: <strong>{cust.cart?.length || 0}</strong> قطع | أمنيات: <strong>{cust.wishlist?.length || 0}</strong>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleCustomerStatus(cust)}
+                            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${
+                              isActive
+                                ? 'bg-[#FFF3E0] hover:bg-[#FFE0B2] text-[#B78103] border border-[#FFE0B2]'
+                                : 'bg-[#2E7D32] hover:bg-[#1B5E20] text-white'
+                            }`}
+                          >
+                            {isActive ? (
+                              <>
+                                <UserX className="w-4 h-4 text-[#C62828]" />
+                                <span className="text-[#C62828]">إيقاف الحساب</span>
+                              </>
+                            ) : (
+                              <>
+                                <UserCheck className="w-4 h-4 text-white" />
+                                <span>تفعيل الحساب الآن</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+              {customers.length === 0 && (
+                <div className="text-center py-12 bg-white rounded-2xl border border-[#DCD5C9] space-y-2">
+                  <User className="w-10 h-10 mx-auto text-[#CCCCCC]" />
+                  <p className="text-sm font-bold text-[#111111]">لا يوجد عملاء مسجلين حتى الآن</p>
+                  <p className="text-xs text-[#777777]">
+                    عندما يقوم أي عميل بإنشاء حساب أو تسجيل الدخول برقم جواله، سيظهر في هذه القائمة مع كامل الصلاحيات لإدارته فورياً.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}

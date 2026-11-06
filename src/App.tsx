@@ -17,6 +17,7 @@ import { AdminDashboard } from './components/AdminDashboard.tsx';
 import { AdminAuthModal } from './components/AdminAuthModal.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { HorizontalProductSlider } from './components/HorizontalProductSlider.tsx';
+import { CustomerAuthModal } from './components/CustomerAuthModal.tsx';
 import { 
   INITIAL_PRODUCTS, 
   INITIAL_BANNERS, 
@@ -24,7 +25,8 @@ import {
   INITIAL_ORDERS, 
   INITIAL_AUDIT_LOGS,
   INITIAL_BANK_ACCOUNTS,
-  INITIAL_REVIEWS
+  INITIAL_REVIEWS,
+  INITIAL_CUSTOMERS
 } from './data/mockData.ts';
 import { 
   Product, 
@@ -37,7 +39,8 @@ import {
   CurrencyType, 
   StoreSettings,
   BankAccount,
-  CustomerReview
+  CustomerReview,
+  CustomerAccount
 } from './types.ts';
 import { 
   ShieldCheck, 
@@ -52,7 +55,8 @@ import {
   Lock,
   Grid,
   Layers,
-  ShoppingBag
+  ShoppingBag,
+  User
 } from 'lucide-react';
 import { OFFICIAL_WHATSAPP_NUMBER } from './utils/whatsapp.ts';
 import { formatCurrencyLabel, convertSARtoCurrency } from './utils/pricing.ts';
@@ -60,6 +64,10 @@ import {
   subscribeToProducts, 
   subscribeToSettings, 
   subscribeToBanners,
+  subscribeToOrders,
+  subscribeToCustomers,
+  subscribeToCustomerData,
+  syncCustomerCartAndWishlist,
   isCloudConfigured 
 } from './services/firebase.ts';
 
@@ -144,6 +152,15 @@ export default function App() {
     loadFromStorage('iin_store_audit_logs', INITIAL_AUDIT_LOGS)
   );
 
+  // Customer accounts state
+  const [customers, setCustomers] = useState<CustomerAccount[]>(() =>
+    loadFromStorage('iin_store_customers', INITIAL_CUSTOMERS)
+  );
+  const [currentCustomer, setCurrentCustomer] = useState<CustomerAccount | null>(() =>
+    loadFromStorage('iin_current_customer', null)
+  );
+  const [isCustomerAuthOpen, setIsCustomerAuthOpen] = useState<boolean>(false);
+
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [wishlist, setWishlist] = useState<Product[]>([INITIAL_PRODUCTS[0]]);
 
@@ -211,17 +228,65 @@ export default function App() {
 
   useEffect(() => {
     try {
+      localStorage.setItem('iin_store_customers', JSON.stringify(customers));
+    } catch (e) {
+      console.warn('Failed to save customers to localStorage', e);
+    }
+  }, [customers]);
+
+  useEffect(() => {
+    try {
+      if (currentCustomer) {
+        localStorage.setItem('iin_current_customer', JSON.stringify(currentCustomer));
+      } else {
+        localStorage.removeItem('iin_current_customer');
+      }
+    } catch (e) {
+      console.warn('Failed to save currentCustomer to localStorage', e);
+    }
+  }, [currentCustomer]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem('iin_store_audit_logs', JSON.stringify(auditLogs));
     } catch (e) {
       console.warn('Failed to save audit logs to localStorage', e);
     }
   }, [auditLogs]);
 
-  // Real-time Cloud Synchronization (Firebase Firestore)
+  // Sync customer cart & wishlist to Firestore
+  useEffect(() => {
+    if (currentCustomer && currentCustomer.phone) {
+      const wishlistIds = wishlist.map((p) => p.id);
+      syncCustomerCartAndWishlist(currentCustomer.phone, cartItems, wishlistIds).catch((err) => {
+        console.warn('Failed to sync customer cart/wishlist to cloud:', err);
+      });
+    }
+  }, [cartItems, wishlist, currentCustomer]);
+
+  // Listen to customer data changes from cloud (e.g. if admin suspended them)
+  useEffect(() => {
+    if (!currentCustomer?.phone) return;
+    const unsubscribe = subscribeToCustomerData(currentCustomer.phone, (cloudData) => {
+      if (cloudData) {
+        setCurrentCustomer(cloudData);
+        if (cloudData.isActive === false) {
+          setToastNotification('تنبيه: تم تعليق حسابك من قبل الإدارة. يرجى التواصل مع المشرف عبر الواتساب.');
+        }
+      }
+    });
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [currentCustomer?.phone]);
+
+  // Real-time Cloud Synchronization (Firebase Firestore onSnapshot)
   useEffect(() => {
     let unsubscribeProducts: (() => void) | null = null;
     let unsubscribeSettings: (() => void) | null = null;
     let unsubscribeBanners: (() => void) | null = null;
+    let unsubscribeOrders: (() => void) | null = null;
+    let unsubscribeCustomers: (() => void) | null = null;
 
     try {
       unsubscribeProducts = subscribeToProducts((cloudProducts) => {
@@ -241,6 +306,20 @@ export default function App() {
           setBanners(cloudBanners);
         }
       });
+
+      // Real-time onSnapshot for Orders (instant incoming orders and status updates)
+      unsubscribeOrders = subscribeToOrders((cloudOrders) => {
+        if (cloudOrders && cloudOrders.length > 0) {
+          setOrders(cloudOrders);
+        }
+      });
+
+      // Real-time onSnapshot for Customers (instant updates and suspension status)
+      unsubscribeCustomers = subscribeToCustomers((cloudCustomers) => {
+        if (cloudCustomers && cloudCustomers.length > 0) {
+          setCustomers(cloudCustomers);
+        }
+      });
     } catch (err) {
       console.warn('Real-time cloud sync subscription notice:', err);
     }
@@ -249,6 +328,8 @@ export default function App() {
       if (unsubscribeProducts) unsubscribeProducts();
       if (unsubscribeSettings) unsubscribeSettings();
       if (unsubscribeBanners) unsubscribeBanners();
+      if (unsubscribeOrders) unsubscribeOrders();
+      if (unsubscribeCustomers) unsubscribeCustomers();
     };
   }, []);
 
@@ -360,6 +441,11 @@ export default function App() {
     }
   };
 
+  const handleCustomerLogout = () => {
+    setCurrentCustomer(null);
+    setToastNotification('تم تسجيل الخروج بنجاح.');
+  };
+
   // Filtered Products
   const filteredProducts = products.filter((p) => {
     if (selectedCategory !== 'all') {
@@ -425,6 +511,8 @@ export default function App() {
             onUpdateBanks={setBanks}
             reviews={reviews}
             onUpdateReviews={setReviews}
+            customers={customers}
+            onUpdateCustomers={setCustomers}
             auditLogs={auditLogs}
             onAddAuditLog={(log) => setAuditLogs((prev) => [log, ...prev])}
             settings={settings}
@@ -455,6 +543,8 @@ export default function App() {
             onToggleCurrency={setCurrency}
             announcementText={settings.topAnnouncementText}
             showAnnouncement={settings.showTopAnnouncement}
+            currentCustomer={currentCustomer}
+            onOpenCustomerAuth={() => setIsCustomerAuthOpen(true)}
           />
 
           <main className="flex-1">
@@ -778,6 +868,8 @@ export default function App() {
         settings={settings}
         banks={banks}
         coupons={coupons}
+        currentCustomer={currentCustomer}
+        onOpenCustomerAuth={() => setIsCustomerAuthOpen(true)}
       />
 
       {/* User Profile & Tracking Modal */}
@@ -789,6 +881,9 @@ export default function App() {
         currency={currency}
         onRemoveFromWishlist={handleToggleWishlist}
         onAddToCart={(p) => handleAddToCart(p)}
+        currentCustomer={currentCustomer}
+        onOpenCustomerAuth={() => setIsCustomerAuthOpen(true)}
+        onLogoutCustomer={handleCustomerLogout}
       />
 
       {/* How It Works Modal */}
@@ -803,6 +898,25 @@ export default function App() {
         onClose={() => setIsAdminAuthOpen(false)}
         correctPin={settings.adminPin}
         onAuthenticate={() => setIsAdminMode(true)}
+      />
+
+      {/* Customer Login & Registration Modal */}
+      <CustomerAuthModal
+        isOpen={isCustomerAuthOpen}
+        onClose={() => setIsCustomerAuthOpen(false)}
+        onLoginSuccess={(customer) => {
+          setCurrentCustomer(customer);
+          setToastNotification(`أهلاً بك مجدداً ${customer.name}! تم تسجيل الدخول ومزامنة سلتك سحابياً ✨`);
+          if (customer.cart && customer.cart.length > 0) {
+            setCartItems(customer.cart);
+          }
+          if (customer.wishlist && customer.wishlist.length > 0) {
+            const restoredWishlist = products.filter((p) => customer.wishlist?.includes(p.id));
+            if (restoredWishlist.length > 0) {
+              setWishlist(restoredWishlist);
+            }
+          }
+        }}
       />
 
       {/* Floating Multi-Product Cart Bar (User request: إضافة أكثر من منتج ومشاركتها) */}

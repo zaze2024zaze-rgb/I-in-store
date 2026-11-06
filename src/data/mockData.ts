@@ -1,4 +1,4 @@
-import { Product, BankAccount, Coupon, Order, AuditLog, CustomerReview, BannerItem } from '../types.ts';
+import { Product, BankAccount, Coupon, Order, AuditLog, CustomerReview, BannerItem, CustomerAccount } from '../types.ts';
 
 export const INITIAL_BANNERS: BannerItem[] = [
   {
@@ -595,3 +595,31 @@ export const INITIAL_AUDIT_LOGS: AuditLog[] = [
     adminUser: 'المشرف العام',
   },
 ];
+
+export const INITIAL_CUSTOMERS: CustomerAccount[] = [
+  {
+    id: 'cust_967784935535',
+    name: 'ريم محمد الشامي',
+    phone: '+967784935535',
+    password: 'password123',
+    city: 'صنعاء',
+    address: 'شارع حدة - بالقرب من جولة الرويشان',
+    isActive: true,
+    createdAt: '2026-10-25T10:00:00Z',
+    lastLoginAt: '2026-11-04T12:00:00Z',
+    notes: 'عميلة VIP دائمة',
+  },
+  {
+    id: 'cust_967771234567',
+    name: 'فهد الأحمدي',
+    phone: '+967771234567',
+    password: 'password123',
+    city: 'عدن',
+    address: 'خور مكسر - حي السفارات',
+    isActive: true,
+    createdAt: '2026-10-28T14:30:00Z',
+    lastLoginAt: '2026-11-03T18:15:00Z',
+    notes: 'عميل مميز للأطقم الرجالية',
+  },
+];
+

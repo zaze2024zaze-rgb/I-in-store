@@ -12,6 +12,7 @@ export interface CartCalculationResult {
   currency: CurrencyType;
   freeShippingQualified: boolean;
   freeShippingThresholdSAR: number;
+  freeShippingRemainingSAR: number;
 }
 
 export const DEFAULT_YER_RATE = 140;
@@ -70,6 +71,8 @@ export function calculateCartTotals(
   const postCouponSAR = Math.max(0, subtotalSAR - couponDiscountSAR);
   const totalSAR = Number((postCouponSAR + shippingFeeSAR).toFixed(2));
 
+  const freeShippingRemainingSAR = freeShippingQualified ? 0 : Math.max(0, customFreeShippingThresholdSAR - subtotalSAR);
+
   return {
     subtotalSAR,
     subtotalDisplay: convertSARtoCurrency(subtotalSAR, currency, yerRate),
@@ -82,5 +85,6 @@ export function calculateCartTotals(
     currency,
     freeShippingQualified,
     freeShippingThresholdSAR: customFreeShippingThresholdSAR,
+    freeShippingRemainingSAR,
   };
 }

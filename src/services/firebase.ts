@@ -4,14 +4,25 @@ import {
   collection,
   doc,
   setDoc,
+  getDoc,
   deleteDoc,
   onSnapshot,
   getDocs,
   writeBatch,
+  query,
+  where,
   Firestore,
   Unsubscribe,
 } from 'firebase/firestore';
-import { Product, StoreSettings, BannerItem } from '../types.ts';
+import { 
+  Product, 
+  StoreSettings, 
+  BannerItem, 
+  Order, 
+  OrderStatus, 
+  CustomerAccount, 
+  CartItem 
+} from '../types.ts';
 
 export interface FirebaseConfig {
   apiKey: string;
@@ -409,4 +420,316 @@ export async function syncAllBannersToCloud(banners: BannerItem[]): Promise<numb
     throw error;
   }
 }
+
+/**
+ * Normalizes phone numbers to a clean numeric document key for Firestore.
+ */
+export function normalizePhoneKey(phone: string): string {
+  const digits = (phone || '').replace(/\D/g, '');
+  return digits || phone.trim();
+}
+
+/**
+ * Real-time listener for orders collection (Admin Dashboard live monitoring via onSnapshot)
+ */
+export function subscribeToOrders(
+  onUpdate: (orders: Order[]) => void,
+  onError?: (error: Error) => void
+): Unsubscribe | null {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  try {
+    const ordersCol = collection(db, 'orders');
+    const unsubscribe = onSnapshot(
+      ordersCol,
+      (snapshot) => {
+        const list: Order[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          list.push({
+            ...(data as Order),
+            id: docSnap.id,
+          });
+        });
+        // Sort orders newest first
+        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        onUpdate(list);
+      },
+      (error) => {
+        console.warn('Firestore orders snapshot error:', error);
+        if (onError) onError(error);
+      }
+    );
+    return unsubscribe;
+  } catch (err: any) {
+    console.warn('Failed to subscribe to orders:', err);
+    if (onError) onError(err);
+    return null;
+  }
+}
+
+/**
+ * Save an order in Firestore cloud
+ */
+export async function saveOrderToCloud(order: Order): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+
+  try {
+    const docRef = doc(db, 'orders', order.id);
+    await setDoc(docRef, { ...order, updatedAt: new Date().toISOString() }, { merge: true });
+    return true;
+  } catch (error) {
+    console.error('Failed to save order to cloud:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update order status and admin notes in Firestore
+ */
+export async function updateOrderStatusInCloud(
+  orderId: string, 
+  status: OrderStatus, 
+  adminNotes?: string
+): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+
+  try {
+    const docRef = doc(db, 'orders', orderId);
+    const updatePayload: Record<string, any> = {
+      status,
+      updatedAt: new Date().toISOString(),
+    };
+    if (adminNotes !== undefined) {
+      updatePayload.adminNotes = adminNotes;
+    }
+    await setDoc(docRef, updatePayload, { merge: true });
+    return true;
+  } catch (error) {
+    console.error('Failed to update order status in cloud:', error);
+    throw error;
+  }
+}
+
+/**
+ * Batch sync orders to cloud
+ */
+export async function syncAllOrdersToCloud(orders: Order[]): Promise<number> {
+  const { db } = initFirebase();
+  if (!db) throw new Error('قاعدة بيانات Firebase غير مهيأة.');
+
+  try {
+    const batch = writeBatch(db);
+    let count = 0;
+    for (const ord of orders) {
+      const docRef = doc(db, 'orders', ord.id);
+      batch.set(docRef, ord, { merge: true });
+      count++;
+    }
+    await batch.commit();
+    return count;
+  } catch (error) {
+    console.error('Batch sync orders error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Real-time listener for customers collection (Admin Dashboard live monitoring)
+ */
+export function subscribeToCustomers(
+  onUpdate: (customers: CustomerAccount[]) => void,
+  onError?: (error: Error) => void
+): Unsubscribe | null {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  try {
+    const customersCol = collection(db, 'customers');
+    const unsubscribe = onSnapshot(
+      customersCol,
+      (snapshot) => {
+        const list: CustomerAccount[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          list.push({
+            id: docSnap.id,
+            name: data.name || `عميل (${data.phone || docSnap.id})`,
+            phone: data.phone || docSnap.id,
+            isActive: data.isActive !== false,
+            createdAt: data.createdAt || new Date().toISOString(),
+            city: data.city || '',
+            address: data.address || '',
+            cart: Array.isArray(data.cart) ? data.cart : [],
+            wishlist: Array.isArray(data.wishlist) ? data.wishlist : [],
+            notes: data.notes || '',
+            ...(data as Partial<CustomerAccount>),
+          });
+        });
+        list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+        onUpdate(list);
+      },
+      (error) => {
+        console.warn('Firestore customers snapshot error:', error);
+        if (onError) onError(error);
+      }
+    );
+    return unsubscribe;
+  } catch (err: any) {
+    console.warn('Failed to subscribe to customers:', err);
+    if (onError) onError(err);
+    return null;
+  }
+}
+
+/**
+ * Save or update a customer account in Firestore
+ */
+export async function saveCustomerToCloud(customer: CustomerAccount): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+
+  try {
+    const key = normalizePhoneKey(customer.phone) || customer.id;
+    const docRef = doc(db, 'customers', key);
+    await setDoc(docRef, { ...customer, id: key }, { merge: true });
+    return true;
+  } catch (error) {
+    console.error('Failed to save customer to cloud:', error);
+    throw error;
+  }
+}
+
+/**
+ * Fetch a customer by phone number from Firestore
+ */
+export async function getCustomerFromCloud(phone: string): Promise<CustomerAccount | null> {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  try {
+    const key = normalizePhoneKey(phone);
+    const docRef = doc(db, 'customers', key);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data() as CustomerAccount;
+    }
+    return null;
+  } catch (error) {
+    console.error('Failed to get customer from cloud:', error);
+    return null;
+  }
+}
+
+/**
+ * Admin action: toggle customer active status (إيقاف أو تشغيل الحساب)
+ */
+export async function updateCustomerStatusInCloud(
+  phone: string, 
+  isActive: boolean, 
+  customerData?: Partial<CustomerAccount>
+): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+
+  try {
+    const key = normalizePhoneKey(phone);
+    const docRef = doc(db, 'customers', key);
+    await setDoc(
+      docRef, 
+      { 
+        phone, 
+        isActive, 
+        statusUpdatedAt: new Date().toISOString(),
+        ...(customerData || {})
+      }, 
+      { merge: true }
+    );
+    return true;
+  } catch (error) {
+    console.error('Failed to update customer status in cloud:', error);
+    throw error;
+  }
+}
+
+/**
+ * Save customer's live cart and wishlist in Firestore
+ */
+export async function syncCustomerCartAndWishlist(
+  phone: string, 
+  cart: CartItem[], 
+  wishlist: string[]
+): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db || !phone) return false;
+
+  try {
+    const key = normalizePhoneKey(phone);
+    const docRef = doc(db, 'customers', key);
+    await setDoc(docRef, {
+      cart,
+      wishlist,
+      lastCartUpdateAt: new Date().toISOString()
+    }, { merge: true });
+    return true;
+  } catch (error) {
+    console.error('Failed to sync customer cart to cloud:', error);
+    return false;
+  }
+}
+
+/**
+ * Real-time listener for a specific customer profile
+ */
+export function subscribeToCustomerData(
+  phone: string,
+  onUpdate: (customer: CustomerAccount | null) => void
+): Unsubscribe | null {
+  const { db } = initFirebase();
+  if (!db || !phone) return null;
+
+  try {
+    const key = normalizePhoneKey(phone);
+    const docRef = doc(db, 'customers', key);
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        onUpdate(docSnap.data() as CustomerAccount);
+      } else {
+        onUpdate(null);
+      }
+    });
+    return unsubscribe;
+  } catch (err) {
+    console.warn('Failed to subscribe to customer data:', err);
+    return null;
+  }
+}
+
+/**
+ * Batch sync all customers to Firestore
+ */
+export async function syncAllCustomersToCloud(customers: CustomerAccount[]): Promise<number> {
+  const { db } = initFirebase();
+  if (!db) throw new Error('قاعدة بيانات Firebase غير مهيأة.');
+
+  try {
+    const batch = writeBatch(db);
+    let count = 0;
+    for (const cust of customers) {
+      const key = normalizePhoneKey(cust.phone) || cust.id;
+      const docRef = doc(db, 'customers', key);
+      batch.set(docRef, { ...cust, id: key }, { merge: true });
+      count++;
+    }
+    await batch.commit();
+    return count;
+  } catch (error) {
+    console.error('Batch sync customers error:', error);
+    throw error;
+  }
+}
+
 
