@@ -21,7 +21,8 @@ import {
   Order, 
   OrderStatus, 
   CustomerAccount, 
-  CartItem 
+  CartItem,
+  BankAccount 
 } from '../types.ts';
 
 export interface FirebaseConfig {
@@ -424,8 +425,9 @@ export async function syncAllBannersToCloud(banners: BannerItem[]): Promise<numb
 /**
  * Normalizes phone numbers to a clean numeric document key for Firestore.
  */
-export function normalizePhoneKey(phone: string): string {
-  const digits = (phone || '').replace(/\D/g, '');
+export function normalizePhoneKey(phone?: string | null): string {
+  if (!phone || typeof phone !== 'string') return '';
+  const digits = phone.replace(/\D/g, '');
   return digits || phone.trim();
 }
 
@@ -471,6 +473,8 @@ export function subscribeToOrders(
             depositBank: data.depositBank,
             depositNotes: data.depositNotes || data.notes || '',
             whatsappMessageSent: data.whatsappMessageSent !== false,
+            trackingNumber: data.trackingNumber || '',
+            shippingCarrier: data.shippingCarrier || '',
             adminNotes: data.adminNotes || '',
             updatedAt: data.updatedAt || data.createdAt || new Date().toISOString(),
             ...(data as Partial<Order>),
@@ -515,12 +519,14 @@ export async function saveOrderToCloud(order: Order): Promise<boolean> {
 }
 
 /**
- * Update order status and admin notes in Firestore
+ * Update order status, tracking, and admin notes in Firestore
  */
 export async function updateOrderStatusInCloud(
   orderId: string, 
   status: OrderStatus, 
-  adminNotes?: string
+  adminNotes?: string,
+  trackingNumber?: string,
+  shippingCarrier?: string
 ): Promise<boolean> {
   const { db } = initFirebase();
   if (!db) return false;
@@ -533,6 +539,12 @@ export async function updateOrderStatusInCloud(
     };
     if (adminNotes !== undefined) {
       updatePayload.adminNotes = adminNotes;
+    }
+    if (trackingNumber !== undefined) {
+      updatePayload.trackingNumber = trackingNumber;
+    }
+    if (shippingCarrier !== undefined) {
+      updatePayload.shippingCarrier = shippingCarrier;
     }
     await setDoc(docRef, updatePayload, { merge: true });
     return true;
@@ -562,6 +574,78 @@ export async function syncAllOrdersToCloud(orders: Order[]): Promise<number> {
   } catch (error) {
     console.error('Batch sync orders error:', error);
     throw error;
+  }
+}
+
+/**
+ * Save bank accounts to Firestore cloud
+ */
+export async function saveBanksToCloud(banks: BankAccount[]): Promise<boolean> {
+  const { db } = initFirebase();
+  if (!db) return false;
+
+  try {
+    const docRef = doc(db, 'settings', 'bank_accounts');
+    await setDoc(docRef, {
+      banks,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+    return true;
+  } catch (error) {
+    console.error('Failed to save bank accounts to cloud:', error);
+    throw error;
+  }
+}
+
+/**
+ * Fetch bank accounts from Firestore cloud
+ */
+export async function fetchBanksFromCloud(): Promise<BankAccount[] | null> {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  try {
+    const docRef = doc(db, 'settings', 'bank_accounts');
+    const snap = await getDoc(docRef);
+    if (snap.exists() && Array.isArray(snap.data()?.banks)) {
+      return snap.data()?.banks as BankAccount[];
+    }
+    return null;
+  } catch (error) {
+    console.error('Failed to fetch bank accounts from cloud:', error);
+    return null;
+  }
+}
+
+/**
+ * Real-time listener for bank accounts in Firestore
+ */
+export function subscribeToBanks(
+  onUpdate: (banks: BankAccount[]) => void,
+  onError?: (error: Error) => void
+): Unsubscribe | null {
+  const { db } = initFirebase();
+  if (!db) return null;
+
+  try {
+    const docRef = doc(db, 'settings', 'bank_accounts');
+    const unsubscribe = onSnapshot(
+      docRef,
+      (docSnap) => {
+        if (docSnap.exists() && Array.isArray(docSnap.data()?.banks)) {
+          onUpdate(docSnap.data()?.banks as BankAccount[]);
+        }
+      },
+      (error) => {
+        console.warn('Firestore banks snapshot error:', error);
+        if (onError) onError(error);
+      }
+    );
+    return unsubscribe;
+  } catch (err: any) {
+    console.warn('Failed to subscribe to banks:', err);
+    if (onError) onError(err);
+    return null;
   }
 }
 

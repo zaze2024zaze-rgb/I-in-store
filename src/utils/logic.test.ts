@@ -307,15 +307,18 @@ test('banners: data structure conforms to cloud Firestore specifications', () =>
 });
 
 test('customer accounts: normalizePhoneKey cleans phone inputs across formats', () => {
-  const normalize = (phone: string): string => {
+  const normalize = (phone?: string | null): string => {
+    if (!phone || typeof phone !== 'string') return '';
     let clean = phone.replace(/[^0-9]/g, '');
     if (clean.startsWith('00')) clean = clean.substring(2);
-    return clean;
+    return clean || phone.trim();
   };
 
   assert.equal(normalize('+967 784 935 535'), '967784935535');
   assert.equal(normalize('00967784935535'), '967784935535');
   assert.equal(normalize('784935535'), '784935535');
+  assert.equal(normalize(undefined), '');
+  assert.equal(normalize(null), '');
 });
 
 test('customer accounts: suspension prevents unauthorized login and ordering', () => {

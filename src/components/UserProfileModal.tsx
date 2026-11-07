@@ -51,11 +51,13 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   const [activeTab, setActiveTab] = useState<'orders' | 'wishlist'>('orders');
 
-  // Filter orders for the logged-in customer's phone number
-  const customerOrders = currentCustomer
+  // Filter orders for the logged-in customer's phone number safely
+  const customerOrders = currentCustomer && currentCustomer.phone
     ? orders.filter((o) => {
         if (!o.customerPhone) return false;
-        return normalizePhoneKey(o.customerPhone) === normalizePhoneKey(currentCustomer.phone);
+        const phoneA = normalizePhoneKey(o.customerPhone);
+        const phoneB = normalizePhoneKey(currentCustomer.phone);
+        return Boolean(phoneA && phoneB && phoneA === phoneB);
       })
     : orders; // If not logged in, show session orders
 
@@ -312,6 +314,28 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                               );
                             })}
                           </div>
+
+                          {/* Tracking Details Banner if provided by Admin */}
+                          {(order.trackingNumber || order.shippingCarrier) && (
+                            <div className="mt-3 p-3 rounded-xl bg-[#FAF9F6] border border-[#E5DFD7] flex flex-wrap items-center justify-between gap-2 text-xs">
+                              <div className="flex items-center gap-2">
+                                <Truck className="w-4 h-4 text-[#8B6B3F] shrink-0" />
+                                <div>
+                                  <span className="font-bold text-[#111111]">بيانات الشحن والتوصيل: </span>
+                                  {order.shippingCarrier && (
+                                    <span className="text-[#555555]">
+                                      شركة الشحن: <strong>{order.shippingCarrier}</strong>
+                                    </span>
+                                  )}
+                                  {order.trackingNumber && (
+                                    <span className="mr-2 text-[#8B6B3F] font-mono font-bold bg-white px-2 py-0.5 rounded border border-[#E5DFD7]">
+                                      بوليصة #{order.trackingNumber}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <div className="bg-[#FFEBEE] text-[#C62828] p-3 rounded-xl text-xs flex items-center gap-2">

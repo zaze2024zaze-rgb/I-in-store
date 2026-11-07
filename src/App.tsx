@@ -67,6 +67,8 @@ import {
   subscribeToOrders,
   subscribeToCustomers,
   subscribeToCustomerData,
+  subscribeToBanks,
+  saveBanksToCloud,
   syncCustomerCartAndWishlist,
   isCloudConfigured 
 } from './services/firebase.ts';
@@ -287,6 +289,7 @@ export default function App() {
     let unsubscribeBanners: (() => void) | null = null;
     let unsubscribeOrders: (() => void) | null = null;
     let unsubscribeCustomers: (() => void) | null = null;
+    let unsubscribeBanks: (() => void) | null = null;
 
     try {
       unsubscribeProducts = subscribeToProducts((cloudProducts) => {
@@ -304,6 +307,13 @@ export default function App() {
       unsubscribeBanners = subscribeToBanners((cloudBanners) => {
         if (cloudBanners && cloudBanners.length > 0) {
           setBanners(cloudBanners);
+        }
+      });
+
+      // Real-time onSnapshot for Bank Accounts (instant cloud sync across all devices)
+      unsubscribeBanks = subscribeToBanks((cloudBanks) => {
+        if (cloudBanks && Array.isArray(cloudBanks) && cloudBanks.length > 0) {
+          setBanks(cloudBanks);
         }
       });
 
@@ -347,6 +357,7 @@ export default function App() {
       if (unsubscribeBanners) unsubscribeBanners();
       if (unsubscribeOrders) unsubscribeOrders();
       if (unsubscribeCustomers) unsubscribeCustomers();
+      if (unsubscribeBanks) unsubscribeBanks();
     };
   }, []);
 

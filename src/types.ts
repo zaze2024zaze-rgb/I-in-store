@@ -170,6 +170,8 @@ export interface Order {
   depositReceiptUrl?: string;
   depositNotes?: string;
   whatsappMessageSent: boolean;
+  trackingNumber?: string;
+  shippingCarrier?: string;
   adminNotes?: string;
   updatedAt: string;
 }

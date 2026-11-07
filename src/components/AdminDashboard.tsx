@@ -75,6 +75,7 @@ import {
   updateOrderStatusInCloud,
   updateCustomerStatusInCloud,
   subscribeToOrders,
+  saveBanksToCloud,
   isCloudConfigured,
   FirebaseConfig
 } from '../services/firebase.ts';
@@ -157,6 +158,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [orderFilterStatus, setOrderFilterStatus] = useState<OrderStatus | 'all'>('all');
   const [isOrdersLiveSynced, setIsOrdersLiveSynced] = useState(false);
   const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
+
+  // Bank accounts cloud sync state
+  const [bankSyncing, setBankSyncing] = useState(false);
+  const [bankSyncSuccess, setBankSyncSuccess] = useState(false);
+
+  const handleSyncBanksToCloudNow = async () => {
+    setBankSyncing(true);
+    try {
+      await saveBanksToCloud(banks);
+      setBankSyncSuccess(true);
+      setTimeout(() => setBankSyncSuccess(false), 3000);
+    } catch (err) {
+      console.error('Failed to sync banks to cloud:', err);
+    } finally {
+      setBankSyncing(false);
+    }
+  };
 
   // Active onSnapshot listener for live orders synchronization in Admin Dashboard
   useEffect(() => {
@@ -431,7 +449,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       onAddAuditLog(createAuditLogEntry('حذف كوبون خصم', id, 'تم إلغاء تفعيل الكوبون'));
     } else if (type === 'bank') {
       if (onUpdateBanks) {
-        onUpdateBanks(banks.filter((b) => b.id !== id));
+        const nextBanks = banks.filter((b) => b.id !== id);
+        onUpdateBanks(nextBanks);
+        saveBanksToCloud(nextBanks).catch((err) => console.warn('Cloud bank delete notice:', err));
         onAddAuditLog(createAuditLogEntry('حذف حساب بنكي', title, `معرف الحساب: ${id}`));
       }
     } else if (type === 'review') {
@@ -634,13 +654,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setItemToDelete({ type: 'product', id: productId, title });
   };
 
-  const handleUpdateOrderStatus = (orderId: string, newStatus: OrderStatus, adminNotes?: string) => {
+  const handleUpdateOrderStatus = (
+    orderId: string, 
+    newStatus: OrderStatus, 
+    adminNotes?: string,
+    trackingNumber?: string,
+    shippingCarrier?: string
+  ) => {
     const updated = orders.map((o) => {
       if (o.id === orderId) {
         return { 
           ...o, 
           status: newStatus, 
           adminNotes: adminNotes !== undefined ? adminNotes : o.adminNotes,
+          trackingNumber: trackingNumber !== undefined ? trackingNumber : o.trackingNumber,
+          shippingCarrier: shippingCarrier !== undefined ? shippingCarrier : o.shippingCarrier,
           updatedAt: new Date().toISOString() 
         };
       }
@@ -649,12 +677,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     onUpdateOrders(updated);
 
     // Sync to Cloud Firestore in real-time
-    updateOrderStatusInCloud(orderId, newStatus, adminNotes).catch((err) => {
+    updateOrderStatusInCloud(orderId, newStatus, adminNotes, trackingNumber, shippingCarrier).catch((err) => {
       console.warn('Could not sync order status to cloud immediately:', err);
     });
 
     onAddAuditLog(
-      createAuditLogEntry('تحديث حالة طلب', `طلب ${orderId}`, `الحالة الجديدة: ${newStatus}`)
+      createAuditLogEntry('تحديث حالة وبيانات شحنة', `طلب ${orderId}`, `الحالة: ${newStatus}`)
     );
   };
 
@@ -752,9 +780,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         notes: sanitizeInput(bankNotesInput.trim()),
         isActive: bankIsActiveInput,
       };
+      const nextBanks = [...banks, newBank];
       if (onUpdateBanks) {
-        onUpdateBanks([...banks, newBank]);
+        onUpdateBanks(nextBanks);
       }
+      saveBanksToCloud(nextBanks).catch((err) => console.warn('Cloud save bank notice:', err));
       onAddAuditLog(createAuditLogEntry('إضافة حساب بنكي جديد', newBank.bankName, `رقم الحساب: ${newBank.accountNumber}`));
     } else if (editingBank) {
       const updated = banks.map((b) => {
@@ -775,6 +805,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       if (onUpdateBanks) {
         onUpdateBanks(updated);
       }
+      saveBanksToCloud(updated).catch((err) => console.warn('Cloud update bank notice:', err));
       onAddAuditLog(createAuditLogEntry('تعديل حساب بنكي', bankNameInput, `تحديث بيانات الحساب`));
     }
     setEditingBank(null);
@@ -789,6 +820,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (!onUpdateBanks) return;
     const updated = banks.map((b) => b.id === bankId ? { ...b, isActive: b.isActive === false ? true : false } : b);
     onUpdateBanks(updated);
+    saveBanksToCloud(updated).catch((err) => console.warn('Cloud toggle bank notice:', err));
   };
 
   // Review Deletion
@@ -1099,8 +1131,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             currentTab === 'orders' ? 'bg-[#111111] text-white shadow-sm' : 'bg-white text-[#666666] hover:bg-[#EAE6DE]'
           }`}
         >
-          <ShoppingCart className="w-4 h-4 text-[#C5A880]" />
-          <span>الطلبات والإيداعات ({orders.length})</span>
+          <Truck className="w-4 h-4 text-[#C5A880]" />
+          <span>الطلبات وتتبع الشحنات ({orders.length})</span>
         </button>
 
         <button
@@ -2352,13 +2384,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </p>
               </div>
 
-              <button
-                onClick={startCreateBank}
-                className="flex items-center gap-2 bg-[#111111] text-white hover:bg-[#333333] px-4 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-sm"
-              >
-                <Plus className="w-4 h-4 text-[#C5A880]" />
-                <span>إضافة حساب بنكي جديد</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSyncBanksToCloudNow}
+                  disabled={bankSyncing}
+                  className="flex items-center gap-1.5 bg-[#FAF8F5] border border-[#D5CFC7] hover:border-[#111111] text-[#111111] px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${bankSyncing ? 'animate-spin text-[#8B6B3F]' : ''}`} />
+                  <span>{bankSyncing ? 'جاري المزامنة...' : bankSyncSuccess ? 'تم الحفظ سحابياً ✓' : 'مزامنة الحسابات سحابياً (Cloud Sync)'}</span>
+                </button>
+
+                <button
+                  onClick={startCreateBank}
+                  className="flex items-center gap-2 bg-[#111111] text-white hover:bg-[#333333] px-4 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-sm"
+                >
+                  <Plus className="w-4 h-4 text-[#C5A880]" />
+                  <span>إضافة حساب بنكي جديد</span>
+                </button>
+              </div>
             </div>
 
             {/* Bank Form (Add or Edit) */}
@@ -3175,6 +3219,97 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             تفاصيل المنتجات مسجلة عبر رسالة الواتساب المباشرة
                           </div>
                         )}
+
+                        {/* Shipment Tracking & Logistics Section */}
+                        <div className="bg-[#FAF9F6] p-4 rounded-xl border border-[#E5DFD7] space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-[#111111] flex items-center gap-1.5">
+                              <Truck className="w-4 h-4 text-[#8B6B3F]" />
+                              <span>بيانات تتبع الشحنة وتفاصيل التوصيل (تظهر للعميل في حسابه وتتبع الطلبات):</span>
+                            </span>
+                            {ord.trackingNumber ? (
+                              <span className="text-[11px] font-mono bg-white px-2.5 py-0.5 rounded-md border border-[#E5DFD7] text-[#8B6B3F] font-bold">
+                                بوليصة #{ord.trackingNumber}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-[#888888]">
+                                لم يتم تعيين رقم تتبع بعد
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                            <div>
+                              <label className="text-[11px] text-[#555555] block mb-1 font-bold">
+                                رقم بوليصة / تتبع الشحنة:
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="مثال: YM-9024 أو 88401..."
+                                defaultValue={ord.trackingNumber || ''}
+                                id={`track_num_${ord.id}`}
+                                className="w-full bg-white border border-[#D5CFC7] rounded-lg px-2.5 py-1.5 text-xs text-[#111111] font-mono focus:ring-1 focus:ring-black"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] text-[#555555] block mb-1 font-bold">
+                                شركة الشحن / مندوب التوصيل:
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="مثال: يمن إكسبرس، أرامكس..."
+                                defaultValue={ord.shippingCarrier || ''}
+                                id={`track_carrier_${ord.id}`}
+                                className="w-full bg-white border border-[#D5CFC7] rounded-lg px-2.5 py-1.5 text-xs text-[#111111] focus:ring-1 focus:ring-black"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] text-[#555555] block mb-1 font-bold">
+                                ملاحظات وتوجيهات الشحن:
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="ملاحظات تظهر للعميل في التتبع..."
+                                defaultValue={ord.adminNotes || ''}
+                                id={`track_notes_${ord.id}`}
+                                className="w-full bg-white border border-[#D5CFC7] rounded-lg px-2.5 py-1.5 text-xs text-[#111111] focus:ring-1 focus:ring-black"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-1">
+                            <span className="text-[10px] text-[#888888]">
+                              تزامن سحابي فوري ومباشر مع حساب العميل وصفحة تتبع الشحنات
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                const btn = e.currentTarget;
+                                const trackVal = (document.getElementById(`track_num_${ord.id}`) as HTMLInputElement)?.value;
+                                const carrierVal = (document.getElementById(`track_carrier_${ord.id}`) as HTMLInputElement)?.value;
+                                const notesVal = (document.getElementById(`track_notes_${ord.id}`) as HTMLInputElement)?.value;
+                                handleUpdateOrderStatus(
+                                  ord.id,
+                                  ord.status,
+                                  notesVal,
+                                  trackVal,
+                                  carrierVal
+                                );
+                                const origText = btn.innerText;
+                                btn.innerText = 'تم الحفظ والمزامنة ✓';
+                                setTimeout(() => {
+                                  btn.innerText = origText;
+                                }, 2000);
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-[#111111] text-white hover:bg-black rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 text-[#C5A880]" />
+                              <span>حفظ وتحديث بيانات الشحنة</span>
+                            </button>
+                          </div>
+                        </div>
 
                         {/* Order Footer: Payment Method, Notes, Total */}
                         <div className="flex flex-wrap items-center justify-between gap-3 text-xs pt-2 border-t border-[#EFECE6] text-[#555555]">

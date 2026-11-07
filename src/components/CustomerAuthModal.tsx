@@ -70,8 +70,8 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     e.preventDefault();
     resetForm();
 
-    const cleanPhone = phone.trim();
-    const cleanPass = password.trim();
+    const cleanPhone = (phone || '').trim();
+    const cleanPass = (password || '').trim();
 
     if (!cleanPhone || !cleanPass) {
       setErrorMessage('يرجى إدخال رقم الجوال وكلمة السر.');
@@ -150,11 +150,11 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     e.preventDefault();
     resetForm();
 
-    const cleanName = fullName.trim();
-    const cleanPhone = phone.trim();
-    const cleanPass = password.trim();
-    const cleanCity = city.trim();
-    const cleanAddress = address.trim();
+    const cleanName = (fullName || '').trim();
+    const cleanPhone = (phone || '').trim();
+    const cleanPass = (password || '').trim();
+    const cleanCity = (city || '').trim();
+    const cleanAddress = (address || '').trim();
 
     if (!cleanName || !cleanPhone || !cleanPass) {
       setErrorMessage('يرجى تعبئة جميع الحقول المطلوبة (الاسم، رقم الجوال، كلمة السر).');
@@ -166,7 +166,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
       return;
     }
 
-    if (cleanPass !== confirmPassword.trim()) {
+    if (cleanPass !== (confirmPassword || '').trim()) {
       setErrorMessage('كلمتا السر غير متطابقتين.');
       return;
     }
