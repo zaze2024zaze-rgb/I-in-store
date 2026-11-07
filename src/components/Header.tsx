@@ -299,14 +299,16 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onOpenProfile}
               className="flex items-center gap-1.5 bg-white border border-[#D5CFC7] hover:border-[#111111] px-3 py-1.5 rounded-full text-xs font-bold text-[#111111] transition-all cursor-pointer shadow-xs"
-              title={`الملف الشخصي وتتبع الطلبات (${currentCustomer.name})`}
+              title={`الملف الشخصي وتتبع الطلبات (${currentCustomer?.name || currentCustomer?.phone || 'حسابي'})`}
             >
               <div className="relative">
                 <User className="w-3.5 h-3.5 text-[#8B6B3F]" />
                 <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-[#2E7D32] rounded-full"></span>
               </div>
               <span className="hidden md:inline truncate max-w-[80px]">
-                {currentCustomer.name.split(' ')[0]}
+                {currentCustomer?.name && typeof currentCustomer.name === 'string'
+                  ? (currentCustomer.name.trim().split(/\s+/)[0] || currentCustomer.name)
+                  : (currentCustomer?.phone || 'حسابي')}
               </span>
             </button>
           ) : (

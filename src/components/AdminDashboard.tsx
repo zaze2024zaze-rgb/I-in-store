@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ShieldCheck, 
   Package, 
@@ -27,6 +27,7 @@ import {
   Gift,
   Crown,
   MessageSquare,
+  MessageCircle,
   Eye,
   EyeOff,
   Database,
@@ -40,7 +41,8 @@ import {
   User,
   UserCheck,
   UserX,
-  Search
+  Search,
+  Clock
 } from 'lucide-react';
 import { 
   Product, 
@@ -72,6 +74,7 @@ import {
   saveSettingsToCloud,
   updateOrderStatusInCloud,
   updateCustomerStatusInCloud,
+  subscribeToOrders,
   isCloudConfigured,
   FirebaseConfig
 } from '../services/firebase.ts';
@@ -148,6 +151,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [currentTab, setCurrentTab] = useState<'settings' | 'banners' | 'products' | 'banks' | 'reviews' | 'coupons' | 'orders' | 'customers' | 'notifications' | 'kpis' | 'audit' | 'cloud'>('settings');
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
   const [customerFilterStatus, setCustomerFilterStatus] = useState<'all' | 'active' | 'suspended'>('all');
+
+  // Real-time Orders state (live search, filter & onSnapshot status)
+  const [orderSearchQuery, setOrderSearchQuery] = useState('');
+  const [orderFilterStatus, setOrderFilterStatus] = useState<OrderStatus | 'all'>('all');
+  const [isOrdersLiveSynced, setIsOrdersLiveSynced] = useState(false);
+  const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
+
+  // Active onSnapshot listener for live orders synchronization in Admin Dashboard
+  useEffect(() => {
+    let unsubscribe: (() => void) | null = null;
+    try {
+      unsubscribe = subscribeToOrders((cloudOrders) => {
+        if (cloudOrders && Array.isArray(cloudOrders)) {
+          setIsOrdersLiveSynced(true);
+          onUpdateOrders(cloudOrders);
+        }
+      });
+    } catch (err) {
+      console.warn('Real-time admin orders subscription error:', err);
+    }
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [onUpdateOrders]);
 
   // Cloud Database state (Firebase Firestore)
   const [isCloudActive, setIsCloudActive] = useState<boolean>(() => isCloudConfigured());
@@ -530,7 +557,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           sizingAccuracy: 10,
           finishingScore: 10,
           staffNotes: prodAdminNotes || 'تم فحص ومطابقة المنتج',
-          inspectionDate: new Date().toISOString().split('T')[0],
+          inspectionDate: (new Date().toISOString() || '').split('T')[0] || new Date().toISOString(),
         },
         variants: finalSizes.map((sz, idx) => ({
           id: `v_${finalCode}_${sz}_${idx}`,
@@ -607,17 +634,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setItemToDelete({ type: 'product', id: productId, title });
   };
 
-  const handleUpdateOrderStatus = (orderId: string, newStatus: OrderStatus) => {
+  const handleUpdateOrderStatus = (orderId: string, newStatus: OrderStatus, adminNotes?: string) => {
     const updated = orders.map((o) => {
       if (o.id === orderId) {
-        return { ...o, status: newStatus, updatedAt: new Date().toISOString() };
+        return { 
+          ...o, 
+          status: newStatus, 
+          adminNotes: adminNotes !== undefined ? adminNotes : o.adminNotes,
+          updatedAt: new Date().toISOString() 
+        };
       }
       return o;
     });
     onUpdateOrders(updated);
 
     // Sync to Cloud Firestore in real-time
-    updateOrderStatusInCloud(orderId, newStatus).catch((err) => {
+    updateOrderStatusInCloud(orderId, newStatus, adminNotes).catch((err) => {
       console.warn('Could not sync order status to cloud immediately:', err);
     });
 
@@ -2816,69 +2848,372 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         )}
 
-        {/* Tab: Orders Logistics */}
-        {currentTab === 'orders' && (
-          <div className="space-y-4">
-            <div className="bg-white p-5 rounded-2xl border border-[#DCD5C9] flex justify-between items-center shadow-sm">
-              <div>
-                <h3 className="text-base font-bold text-[#111111]">متابعة وإدارة الطلبات الواردة</h3>
-                <p className="text-xs text-[#777777]">الطلبات المستلمة عبر رسائل الواتساب والإيداع البنكي</p>
-              </div>
-              <span className="text-xs font-mono bg-[#111111] text-white px-3 py-1 rounded-full">
-                إجمالي الطلبات: {orders.length}
-              </span>
-            </div>
+        {/* Tab: Orders Logistics & Deposits with Real-time onSnapshot */}
+        {currentTab === 'orders' && (() => {
+          const statusLabels: Record<OrderStatus, string> = {
+            pending_confirmation: 'بانتظار التأكيد',
+            processing: 'جاري التحضير',
+            shipped: 'تم الشحن',
+            out_for_delivery: 'قيد التوصيل',
+            delivered: 'تم الاستلام',
+            cancelled: 'ملغي',
+          };
 
-            <div className="space-y-3">
-              {orders.map((ord) => (
-                <div key={ord.id} className="bg-white p-5 rounded-2xl border border-[#DCD5C9] space-y-3 shadow-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EFECE6] pb-3">
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono font-bold text-sm bg-[#111111] text-white px-2.5 py-1 rounded">
-                        {ord.orderNumber}
-                      </span>
-                      <div>
-                        <span className="text-xs font-bold text-[#111111] block">
-                          {ord.customerName} ({ord.customerPhone})
-                        </span>
-                        <span className="text-[11px] text-[#777777]">
-                          {ord.customerCity} - {ord.customerAddress || 'عنوان قياسي'}
-                        </span>
-                      </div>
-                    </div>
+          const statusColors: Record<OrderStatus, { bg: string; text: string; border: string }> = {
+            pending_confirmation: { bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-200' },
+            processing: { bg: 'bg-blue-50', text: 'text-blue-800', border: 'border-blue-200' },
+            shipped: { bg: 'bg-indigo-50', text: 'text-indigo-800', border: 'border-indigo-200' },
+            out_for_delivery: { bg: 'bg-purple-50', text: 'text-purple-800', border: 'border-purple-200' },
+            delivered: { bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-200' },
+            cancelled: { bg: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-200' },
+          };
 
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-[#666666]">تغيير الحالة:</span>
-                      <select
-                        value={ord.status}
-                        onChange={(e) => handleUpdateOrderStatus(ord.id, e.target.value as OrderStatus)}
-                        className="bg-[#FAF9F6] border border-[#D5CFC7] rounded-lg px-2.5 py-1 text-xs font-bold text-[#111111] cursor-pointer"
-                      >
-                        <option value="pending_confirmation">بانتظار التأكيد (Pending)</option>
-                        <option value="processing">جاري التحضير (Processing)</option>
-                        <option value="shipped">تم الشحن (Shipped)</option>
-                        <option value="out_for_delivery">قيد التوصيل (Out for delivery)</option>
-                        <option value="delivered">تم الاستلام (Delivered)</option>
-                        <option value="cancelled">ملغي (Cancelled)</option>
-                      </select>
-                    </div>
-                  </div>
+          const filteredOrders = orders.filter((ord) => {
+            if (orderFilterStatus !== 'all' && ord.status !== orderFilterStatus) {
+              return false;
+            }
+            if (orderSearchQuery.trim()) {
+              const q = orderSearchQuery.toLowerCase().trim();
+              const matchNum = Boolean(ord.orderNumber?.toLowerCase().includes(q) || ord.id?.toLowerCase().includes(q));
+              const matchName = Boolean(ord.customerName?.toLowerCase().includes(q));
+              const matchPhone = Boolean(ord.customerPhone?.toLowerCase().includes(q));
+              const matchCity = Boolean(ord.customerCity?.toLowerCase().includes(q));
+              const matchNotes = Boolean(
+                ord.depositNotes?.toLowerCase().includes(q) || 
+                ord.adminNotes?.toLowerCase().includes(q)
+              );
+              return matchNum || matchName || matchPhone || matchCity || matchNotes;
+            }
+            return true;
+          });
 
-                  <div className="flex flex-wrap items-center justify-between text-xs pt-2 text-[#555555]">
-                    <div>
-                      <span>طريقة الدفع: <strong>{ord.paymentMethod === 'bank_deposit' ? `إيداع بنكي (${ord.depositBank})` : 'طلب عبر الواتساب'}</strong></span>
-                      {ord.depositNotes && <span className="mr-3 text-[#8B6B3F]">ملاحظات: {ord.depositNotes}</span>}
-                    </div>
-
-                    <span className="font-bold text-[#111111] text-sm font-mono tabular-nums">
-                      الإجمالي: {formatCurrencyLabel(ord.total, ord.currency || 'SAR')}
+          return (
+            <div className="space-y-4">
+              {/* Header Banner with Real-time Status */}
+              <div className="bg-white p-5 rounded-2xl border border-[#DCD5C9] flex flex-wrap justify-between items-center gap-4 shadow-sm">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-[#111111]">متابعة وإدارة الطلبات والإيداعات الواردة</h3>
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#E8F5E9] text-[#1B5E20] border border-[#C8E6C9]">
+                      <span className="w-2 h-2 rounded-full bg-[#2E7D32] animate-pulse"></span>
+                      متصل لحظياً (onSnapshot 🟢)
                     </span>
                   </div>
+                  <p className="text-xs text-[#777777] mt-0.5">
+                    الاستماع المباشر لكافة الطلبات الواردة من جميع العملاء وقاعدة بيانات Firestore دون الحاجة لتحديث الصفحة
+                  </p>
                 </div>
-              ))}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-mono bg-[#111111] text-white px-3 py-1 rounded-full font-bold">
+                    إجمالي الطلبات: {orders.length}
+                  </span>
+                  <span className="text-xs bg-[#FFF8E1] text-[#F57F17] font-bold px-2.5 py-1 rounded-full border border-[#FFE082]">
+                    بانتظار التأكيد: {orders.filter(o => o.status === 'pending_confirmation').length}
+                  </span>
+                  <span className="text-xs bg-[#E8F5E9] text-[#1B5E20] font-bold px-2.5 py-1 rounded-full border border-[#C8E6C9]">
+                    تم الاستلام: {orders.filter(o => o.status === 'delivered').length}
+                  </span>
+                </div>
+              </div>
+
+              {/* Search and Status Filters Toolbar */}
+              <div className="bg-white p-4 rounded-2xl border border-[#DCD5C9] flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                {/* Search Bar */}
+                <div className="flex items-center bg-[#FAF9F6] border border-[#D5CFC7] rounded-xl px-3 py-1.5 w-full sm:w-88">
+                  <Search className="w-4 h-4 text-[#888888] shrink-0 ml-2" />
+                  <input
+                    type="text"
+                    placeholder="ابحث برقم الطلب (مثل IN-55758)، اسم العميل، الجوال..."
+                    value={orderSearchQuery}
+                    onChange={(e) => setOrderSearchQuery(e.target.value)}
+                    className="w-full text-xs bg-transparent focus:outline-none text-[#111111]"
+                  />
+                  {orderSearchQuery && (
+                    <button
+                      onClick={() => setOrderSearchQuery('')}
+                      className="text-xs text-[#888888] hover:text-[#111111] cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Status Filter Buttons */}
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="text-[#666666] ml-1">الحالة:</span>
+                  <button
+                    onClick={() => setOrderFilterStatus('all')}
+                    className={`px-3 py-1 rounded-lg transition-colors cursor-pointer ${
+                      orderFilterStatus === 'all'
+                        ? 'bg-[#111111] text-white font-bold'
+                        : 'bg-[#FAF9F6] text-[#666666] hover:bg-[#EFECE6]'
+                    }`}
+                  >
+                    الكل ({orders.length})
+                  </button>
+                  <button
+                    onClick={() => setOrderFilterStatus('pending_confirmation')}
+                    className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                      orderFilterStatus === 'pending_confirmation'
+                        ? 'bg-[#B45309] text-white font-bold'
+                        : 'bg-[#FFFBEB] text-[#92400E] hover:bg-[#FEF3C7]'
+                    }`}
+                  >
+                    بانتظار التأكيد ({orders.filter(o => o.status === 'pending_confirmation').length})
+                  </button>
+                  <button
+                    onClick={() => setOrderFilterStatus('processing')}
+                    className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                      orderFilterStatus === 'processing'
+                        ? 'bg-[#1D4ED8] text-white font-bold'
+                        : 'bg-[#EFF6FF] text-[#1E40AF] hover:bg-[#DBEAFE]'
+                    }`}
+                  >
+                    جاري التحضير ({orders.filter(o => o.status === 'processing').length})
+                  </button>
+                  <button
+                    onClick={() => setOrderFilterStatus('shipped')}
+                    className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                      orderFilterStatus === 'shipped'
+                        ? 'bg-[#4338CA] text-white font-bold'
+                        : 'bg-[#EEF2FF] text-[#3730A3] hover:bg-[#E0E7FF]'
+                    }`}
+                  >
+                    تم الشحن ({orders.filter(o => o.status === 'shipped').length})
+                  </button>
+                  <button
+                    onClick={() => setOrderFilterStatus('delivered')}
+                    className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                      orderFilterStatus === 'delivered'
+                        ? 'bg-[#15803D] text-white font-bold'
+                        : 'bg-[#F0FDF4] text-[#166534] hover:bg-[#DCFCE7]'
+                    }`}
+                  >
+                    تم الاستلام ({orders.filter(o => o.status === 'delivered').length})
+                  </button>
+                  <button
+                    onClick={() => setOrderFilterStatus('cancelled')}
+                    className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                      orderFilterStatus === 'cancelled'
+                        ? 'bg-[#B91C1C] text-white font-bold'
+                        : 'bg-[#FEF2F2] text-[#991B1B] hover:bg-[#FEE2E2]'
+                    }`}
+                  >
+                    ملغي ({orders.filter(o => o.status === 'cancelled').length})
+                  </button>
+                </div>
+              </div>
+
+              {/* Orders List */}
+              {filteredOrders.length === 0 ? (
+                <div className="bg-white p-8 rounded-2xl border border-[#DCD5C9] text-center space-y-3">
+                  <Package className="w-10 h-10 text-[#CCCCCC] mx-auto" />
+                  <p className="text-sm font-bold text-[#444444]">لا توجد طلبات تطابق معايير البحث أو التصفية</p>
+                  <p className="text-xs text-[#888888]">
+                    {orderSearchQuery || orderFilterStatus !== 'all'
+                      ? 'جرب إعادة ضبط البحث أو تصفية الحالة لعرض بقية الطلبات'
+                      : 'بانتظار طلبات العملاء الجديدة، ستظهر هنا فور إرسالها لحظياً.'}
+                  </p>
+                  {(orderSearchQuery || orderFilterStatus !== 'all') && (
+                    <button
+                      onClick={() => {
+                        setOrderSearchQuery('');
+                        setOrderFilterStatus('all');
+                      }}
+                      className="px-4 py-1.5 bg-[#111111] text-white text-xs font-bold rounded-lg hover:bg-black transition-colors cursor-pointer"
+                    >
+                      إعادة ضبط التصفية
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredOrders.map((ord) => {
+                    const stColor = statusColors[ord.status] || { bg: 'bg-gray-50', text: 'text-gray-800', border: 'border-gray-200' };
+                    const rawCleanPhone = (ord.customerPhone || '').replace(/[^0-9]/g, '');
+                    const waLink = rawCleanPhone
+                      ? `https://wa.me/${rawCleanPhone}?text=${encodeURIComponent(`مرحباً ${ord.customerName || 'عميلنا العزيز'}، بخصوص طلبك رقم ${ord.orderNumber} في متجر I-in-store:`)}`
+                      : null;
+
+                    return (
+                      <div key={ord.id} className="bg-white p-5 rounded-2xl border border-[#DCD5C9] space-y-4 shadow-sm hover:border-[#111111] transition-colors">
+                        {/* Order Top Bar */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EFECE6] pb-3">
+                          <div className="flex items-center gap-3">
+                            <span className="font-mono font-bold text-sm bg-[#111111] text-white px-2.5 py-1 rounded inline-flex items-center gap-1.5">
+                              <span>{ord.orderNumber}</span>
+                              <button
+                                type="button"
+                                title="نسخ رقم الطلب"
+                                onClick={() => {
+                                  if (navigator.clipboard) {
+                                    navigator.clipboard.writeText(ord.orderNumber);
+                                    setCopiedOrderId(ord.id);
+                                    setTimeout(() => setCopiedOrderId(null), 2000);
+                                  }
+                                }}
+                                className="text-neutral-400 hover:text-white transition-colors cursor-pointer"
+                              >
+                                {copiedOrderId === ord.id ? (
+                                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </span>
+
+                            <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${stColor.bg} ${stColor.text} ${stColor.border}`}>
+                              {statusLabels[ord.status] || ord.status}
+                            </span>
+
+                            <span className="text-[11px] text-[#777777] font-mono flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-[#999999]" />
+                              {ord.createdAt ? new Date(ord.createdAt).toLocaleString('ar-SA', { dateStyle: 'short', timeStyle: 'short' }) : 'مسجل'}
+                            </span>
+                          </div>
+
+                          {/* Quick Status Updater */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-[#666666]">تحديث الحالة لحظياً:</span>
+                            <select
+                              value={ord.status}
+                              onChange={(e) => handleUpdateOrderStatus(ord.id, e.target.value as OrderStatus)}
+                              className="bg-[#FAF9F6] border border-[#D5CFC7] rounded-lg px-2.5 py-1 text-xs font-bold text-[#111111] cursor-pointer focus:ring-1 focus:ring-black"
+                            >
+                              <option value="pending_confirmation">بانتظار التأكيد (Pending)</option>
+                              <option value="processing">جاري التحضير (Processing)</option>
+                              <option value="shipped">تم الشحن (Shipped)</option>
+                              <option value="out_for_delivery">قيد التوصيل (Out for delivery)</option>
+                              <option value="delivered">تم الاستلام (Delivered)</option>
+                              <option value="cancelled">ملغي (Cancelled)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Customer Information & WhatsApp Action */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 bg-[#FAF9F6] p-3 rounded-xl border border-[#EFECE6]">
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-[#111111]">
+                                {ord.customerName || 'عميل المتجر'}
+                              </span>
+                              <span className="text-xs font-mono text-[#555555] dir-ltr">
+                                {ord.customerPhone || 'بدون هاتف'}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-[#777777]">
+                              <span>{ord.customerCity || 'المدينة غير محددة'}</span>
+                              {ord.customerAddress && <span> - {ord.customerAddress}</span>}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {waLink && (
+                              <a
+                                href={waLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#25D366] hover:bg-[#1EBE5D] text-white text-xs font-bold rounded-lg transition-colors shadow-xs cursor-pointer"
+                              >
+                                <MessageCircle className="w-3.5 h-3.5" />
+                                <span>مراسلة عبر الواتساب</span>
+                              </a>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Order Items Breakdown */}
+                        {ord.items && ord.items.length > 0 ? (
+                          <div className="space-y-2">
+                            <span className="text-[11px] font-bold text-[#777777] block">
+                              المنتجات المطلوبة ({ord.items.reduce((s, it) => s + (it.quantity || 1), 0)} قطعة):
+                            </span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                              {ord.items.map((item, idx) => {
+                                const anyItem = item as any;
+                                const itemTitle = anyItem.title || item.product?.title || 'منتج من المتجر';
+                                const itemImg = anyItem.image || item.product?.images?.[0] || '';
+                                const itemSize = item.selectedSize || anyItem.size || '';
+                                const itemColor = item.selectedColor || anyItem.color || '';
+                                const itemQty = item.quantity || 1;
+                                const itemPrice = item.unitPriceSAR ?? anyItem.price ?? item.product?.priceSAR ?? 0;
+
+                                return (
+                                  <div key={idx} className="flex items-center gap-2.5 p-2 rounded-xl bg-white border border-[#EFECE6]">
+                                    {itemImg ? (
+                                      <img
+                                        src={itemImg}
+                                        alt={itemTitle}
+                                        className="w-10 h-10 object-cover rounded-lg shrink-0 border border-[#EAE6DE]"
+                                      />
+                                    ) : (
+                                      <div className="w-10 h-10 rounded-lg bg-[#FAF9F6] border border-[#EAE6DE] flex items-center justify-center shrink-0">
+                                        <Package className="w-4 h-4 text-[#AAAAAA]" />
+                                      </div>
+                                    )}
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-xs font-bold text-[#111111] truncate">{itemTitle}</p>
+                                      <p className="text-[10px] text-[#777777] truncate">
+                                        {itemSize ? `المقاس: ${itemSize} • ` : ''}
+                                        {itemColor ? `اللون: ${itemColor} • ` : ''}
+                                        الكمية: {itemQty}
+                                      </p>
+                                    </div>
+                                    <div className="text-left shrink-0">
+                                      <span className="text-xs font-bold font-mono text-[#111111]">
+                                        {formatCurrencyLabel(itemPrice * itemQty, ord.currency || 'SAR')}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-[#777777] italic py-1">
+                            تفاصيل المنتجات مسجلة عبر رسالة الواتساب المباشرة
+                          </div>
+                        )}
+
+                        {/* Order Footer: Payment Method, Notes, Total */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 text-xs pt-2 border-t border-[#EFECE6] text-[#555555]">
+                          <div className="space-y-0.5">
+                            <div>
+                              <span>طريقة الدفع: </span>
+                              <strong className="text-[#111111]">
+                                {ord.paymentMethod === 'bank_deposit'
+                                  ? `إيداع بنكي (${ord.depositBank || 'حساب المتجر'})`
+                                  : 'تأكيد ودفع عبر الواتساب'}
+                              </strong>
+                            </div>
+                            {ord.depositNotes && (
+                              <div className="text-[11px] text-[#8B6B3F]">
+                                <strong>ملاحظات العميل:</strong> {ord.depositNotes}
+                              </div>
+                            )}
+                            {ord.adminNotes && (
+                              <div className="text-[11px] text-[#2563EB]">
+                                <strong>ملاحظات المشرف:</strong> {ord.adminNotes}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="text-left">
+                            <span className="text-[11px] text-[#777777] block">إجمالي الطلب:</span>
+                            <span className="font-bold text-[#111111] text-base font-mono tabular-nums">
+                              {formatCurrencyLabel(ord.total, ord.currency || 'SAR')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Tab: Customers Management */}
         {currentTab === 'customers' && (

@@ -310,7 +310,24 @@ export default function App() {
       // Real-time onSnapshot for Orders (instant incoming orders and status updates)
       unsubscribeOrders = subscribeToOrders((cloudOrders) => {
         if (cloudOrders && cloudOrders.length > 0) {
-          setOrders(cloudOrders);
+          setOrders((prev) => {
+            const map = new Map<string, Order>();
+            // Cloud orders are authoritative
+            cloudOrders.forEach((o) => map.set(o.id, o));
+            // Keep any locally created orders not yet committed
+            prev.forEach((o) => {
+              if (!map.has(o.id)) {
+                map.set(o.id, o);
+              }
+            });
+            const merged = Array.from(map.values());
+            merged.sort((a, b) => {
+              const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+              const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+              return (Number.isNaN(timeB) ? 0 : timeB) - (Number.isNaN(timeA) ? 0 : timeA);
+            });
+            return merged;
+          });
         }
       });
 

@@ -39,12 +39,12 @@ const STORAGE_KEY_FIREBASE_CONFIG = 'iin_firebase_custom_config';
  * Production Firebase Configuration provided by user for I in Store
  */
 export const DEFAULT_BUILTIN_FIREBASE_CONFIG: FirebaseConfig = {
-  apiKey: "AIzaSyDY36h48B5SdC-ZcH_gAB0r8hs-ltsU1YY",
+  apiKey: "AIzaSyDY36h48B5SdC-ZCh_gAB0r8hs-1tsU1YY",
   authDomain: "i-in-store.firebaseapp.com",
   projectId: "i-in-store",
   storageBucket: "i-in-store.firebasestorage.app",
   messagingSenderId: "888808655629",
-  appId: "1:888808655629:web:54862f75751d2a3e1f3e44"
+  appId: "1:888808655629:web:54862f75751d2a3e1f3e044"
 };
 
 /**
@@ -447,13 +447,41 @@ export function subscribeToOrders(
         const list: Order[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
+          const ordId = docSnap.id;
+          const ordNumber =
+            data.orderNumber ||
+            (ordId.startsWith('IN-') ? ordId : (ordId.startsWith('ord_') ? ('IN-' + ordId.slice(-5)) : ('IN-' + ordId.slice(0, 8))));
+
           list.push({
-            ...(data as Order),
-            id: docSnap.id,
+            id: ordId,
+            orderNumber: ordNumber,
+            createdAt: data.createdAt || new Date().toISOString(),
+            items: Array.isArray(data.items) ? data.items : [],
+            subtotal: typeof data.subtotal === 'number' ? data.subtotal : (Number(data.subtotal) || Number(data.total) || 0),
+            couponDiscount: typeof data.couponDiscount === 'number' ? data.couponDiscount : (Number(data.couponDiscount) || 0),
+            shippingFee: typeof data.shippingFee === 'number' ? data.shippingFee : (Number(data.shippingFee) || 0),
+            total: typeof data.total === 'number' ? data.total : (Number(data.total) || Number(data.subtotal) || 0),
+            currency: data.currency || 'SAR',
+            status: (data.status as OrderStatus) || 'pending_confirmation',
+            customerName: data.customerName || data.name || 'عميل المتجر',
+            customerPhone: data.customerPhone || data.phone || '',
+            customerCity: data.customerCity || data.city || 'صنعاء',
+            customerAddress: data.customerAddress || data.address || '',
+            paymentMethod: data.paymentMethod || 'whatsapp_order',
+            depositBank: data.depositBank,
+            depositNotes: data.depositNotes || data.notes || '',
+            whatsappMessageSent: data.whatsappMessageSent !== false,
+            adminNotes: data.adminNotes || '',
+            updatedAt: data.updatedAt || data.createdAt || new Date().toISOString(),
+            ...(data as Partial<Order>),
           });
         });
-        // Sort orders newest first
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        // Sort orders newest first with safe date comparison
+        list.sort((a, b) => {
+          const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return (Number.isNaN(timeB) ? 0 : timeB) - (Number.isNaN(timeA) ? 0 : timeA);
+        });
         onUpdate(list);
       },
       (error) => {
