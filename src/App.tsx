@@ -372,9 +372,20 @@ export default function App() {
   const [slideOverProduct, setSlideOverProduct] = useState<Product | null>(null);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
+  const [profileModalTab, setProfileModalTab] = useState<'orders' | 'wishlist'>('orders');
   const [isHowItWorksOpen, setIsHowItWorksOpen] = useState<boolean>(false);
   const [isAdminMode, setIsAdminMode] = useState<boolean>(false);
   const [isAdminAuthOpen, setIsAdminAuthOpen] = useState<boolean>(false);
+
+  const handleOpenWishlist = () => {
+    setProfileModalTab('wishlist');
+    setIsProfileOpen(true);
+  };
+
+  const handleOpenProfileOrders = () => {
+    setProfileModalTab('orders');
+    setIsProfileOpen(true);
+  };
 
   // Live Toast Notification
   const [toastNotification, setToastNotification] = useState<string | null>(
@@ -556,8 +567,8 @@ export default function App() {
             cartCount={cartItems.reduce((acc, it) => acc + it.quantity, 0)}
             wishlistCount={wishlist.length}
             onOpenCart={() => setIsCartOpen(true)}
-            onOpenWishlist={() => setIsProfileOpen(true)}
-            onOpenProfile={() => setIsProfileOpen(true)}
+            onOpenWishlist={handleOpenWishlist}
+            onOpenProfile={handleOpenProfileOrders}
             onOpenHowItWorks={() => setIsHowItWorksOpen(true)}
             onOpenAdminAuth={() => setIsAdminAuthOpen(true)}
             searchQuery={searchQuery}
@@ -818,7 +829,7 @@ export default function App() {
                   <button onClick={() => setIsHowItWorksOpen(true)} className="hover:text-[#C5A880] transition-colors cursor-pointer">
                     كيف نعمل؟
                   </button>
-                  <button onClick={() => setIsProfileOpen(true)} className="hover:text-[#C5A880] transition-colors cursor-pointer">
+                  <button onClick={handleOpenProfileOrders} className="hover:text-[#C5A880] transition-colors cursor-pointer">
                     تتبع الشحنات
                   </button>
                 </div>
@@ -904,6 +915,7 @@ export default function App() {
       <UserProfileModal
         isOpen={isProfileOpen}
         onClose={() => setIsProfileOpen(false)}
+        initialTab={profileModalTab}
         orders={orders}
         wishlist={wishlist}
         currency={currency}

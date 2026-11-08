@@ -502,6 +502,15 @@ export function subscribeToOrders(
 }
 
 /**
+ * Recursively cleans undefined fields from objects before sending to Firestore,
+ * preventing 'Unsupported field value: undefined' errors.
+ */
+export function cleanForFirestore<T>(data: T): any {
+  if (data === null || data === undefined) return null;
+  return JSON.parse(JSON.stringify(data));
+}
+
+/**
  * Save an order in Firestore cloud
  */
 export async function saveOrderToCloud(order: Order): Promise<boolean> {
@@ -510,7 +519,16 @@ export async function saveOrderToCloud(order: Order): Promise<boolean> {
 
   try {
     const docRef = doc(db, 'orders', order.id);
-    await setDoc(docRef, { ...order, updatedAt: new Date().toISOString() }, { merge: true });
+    const cleaned = cleanForFirestore({
+      ...order,
+      depositBank: order.depositBank || '',
+      depositNotes: order.depositNotes || '',
+      trackingNumber: order.trackingNumber || '',
+      shippingCarrier: order.shippingCarrier || '',
+      adminNotes: order.adminNotes || '',
+      updatedAt: new Date().toISOString(),
+    });
+    await setDoc(docRef, cleaned, { merge: true });
     return true;
   } catch (error) {
     console.error('Failed to save order to cloud:', error);
@@ -538,15 +556,15 @@ export async function updateOrderStatusInCloud(
       updatedAt: new Date().toISOString(),
     };
     if (adminNotes !== undefined) {
-      updatePayload.adminNotes = adminNotes;
+      updatePayload.adminNotes = adminNotes || '';
     }
     if (trackingNumber !== undefined) {
-      updatePayload.trackingNumber = trackingNumber;
+      updatePayload.trackingNumber = trackingNumber || '';
     }
     if (shippingCarrier !== undefined) {
-      updatePayload.shippingCarrier = shippingCarrier;
+      updatePayload.shippingCarrier = shippingCarrier || '';
     }
-    await setDoc(docRef, updatePayload, { merge: true });
+    await setDoc(docRef, cleanForFirestore(updatePayload), { merge: true });
     return true;
   } catch (error) {
     console.error('Failed to update order status in cloud:', error);

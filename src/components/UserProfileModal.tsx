@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Package, 
@@ -28,6 +28,7 @@ interface UserProfileModalProps {
   orders: Order[];
   wishlist: Product[];
   currency: CurrencyType;
+  initialTab?: 'orders' | 'wishlist';
   onRemoveFromWishlist: (product: Product) => void;
   onAddToCart: (product: Product) => void;
   currentCustomer?: CustomerAccount | null;
@@ -41,17 +42,25 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   orders,
   wishlist,
   currency,
+  initialTab = 'orders',
   onRemoveFromWishlist,
   onAddToCart,
   currentCustomer,
   onOpenCustomerAuth,
   onLogoutCustomer,
 }) => {
+  const [activeTab, setActiveTab] = useState<'orders' | 'wishlist'>(initialTab);
+
+  useEffect(() => {
+    if (isOpen) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
+
   if (!isOpen) return null;
 
-  const [activeTab, setActiveTab] = useState<'orders' | 'wishlist'>('orders');
-
-  // Filter orders for the logged-in customer's phone number safely
+  // Filter orders for the logged-in customer's phone number strictly and safely.
+  // CRITICAL PRIVACY FIX: NEVER expose store orders or other customer orders to visitors or other customers.
   const customerOrders = currentCustomer && currentCustomer.phone
     ? orders.filter((o) => {
         if (!o.customerPhone) return false;
@@ -59,7 +68,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         const phoneB = normalizePhoneKey(currentCustomer.phone);
         return Boolean(phoneA && phoneB && phoneA === phoneB);
       })
-    : orders; // If not logged in, show session orders
+    : []; // Strictly empty array if not logged in!
 
   const getStatusStepIndex = (status: OrderStatus) => {
     switch (status) {
@@ -227,11 +236,38 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         <div className="p-6 overflow-y-auto flex-1 space-y-6">
           {activeTab === 'orders' ? (
             <div className="space-y-6">
-              {customerOrders.length === 0 ? (
+              {!currentCustomer ? (
+                <div className="bg-[#FAF9F6] border border-[#E8E4DD] rounded-2xl p-8 text-center space-y-4 max-w-md mx-auto my-6">
+                  <div className="w-14 h-14 rounded-2xl bg-[#111111] text-[#C5A880] mx-auto flex items-center justify-center shadow-xs">
+                    <ShieldCheck className="w-7 h-7" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-base font-bold text-[#111111]">
+                      تتبع الطلبات والشحنات خاص بحساب العميل
+                    </h3>
+                    <p className="text-xs text-[#666666] leading-relaxed">
+                      حفاظاً على خصوصية وأمان بياناتك، يرجى تسجيل الدخول برقم جوالك لتتمكن من استعراض ومتابعة مسار طلباتك وشحناتك الخاصة فقط بأمان وسرية تامة.
+                    </p>
+                  </div>
+                  {onOpenCustomerAuth && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenCustomerAuth();
+                      }}
+                      className="inline-flex items-center gap-2 bg-[#111111] text-white hover:bg-[#2C2C2C] px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                    >
+                      <LogIn className="w-4 h-4 text-[#C5A880]" />
+                      <span>تسجيل الدخول / إنشاء حساب عميل</span>
+                    </button>
+                  )}
+                </div>
+              ) : customerOrders.length === 0 ? (
                 <div className="text-center py-12 space-y-3">
                   <Package className="w-12 h-12 mx-auto text-[#BBBBBB]" />
                   <h3 className="text-sm font-bold text-[#111111]">
-                    {currentCustomer ? 'لا توجد طلبات مسجلة لرقم جوالك حتى الآن' : 'لا توجد طلبات معروضة'}
+                    لا توجد طلبات مسجلة لرقم جوالك ({currentCustomer.phone}) حتى الآن
                   </h3>
                   <p className="text-xs text-[#777777] max-w-sm mx-auto">
                     عند إرسال طلبك عبر الواتساب أو الإيداع البنكي سيتم تسجيله تلقائياً وتحديث مساره هنا لحظة بلحظة.
