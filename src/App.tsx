@@ -501,13 +501,13 @@ export default function App() {
 
     if (p.priceSAR > priceMaxFilterSAR) return false;
 
-    if (searchQuery.trim()) {
+    if ((searchQuery || '').trim()) {
       const q = searchQuery.toLowerCase().trim();
-      const matchTitle = p.title.toLowerCase().includes(q);
-      const matchEn = p.titleEn.toLowerCase().includes(q);
-      const matchDesc = p.description.toLowerCase().includes(q);
-      const matchFabric = p.fabricDetails.toLowerCase().includes(q);
-      const matchTags = p.tags.some((t) => t.toLowerCase().includes(q));
+      const matchTitle = Boolean(p.title && p.title.toLowerCase().includes(q));
+      const matchEn = Boolean(p.titleEn && p.titleEn.toLowerCase().includes(q));
+      const matchDesc = Boolean(p.description && p.description.toLowerCase().includes(q));
+      const matchFabric = Boolean(p.fabricDetails && p.fabricDetails.toLowerCase().includes(q));
+      const matchTags = Array.isArray(p.tags) && p.tags.some((t) => Boolean(t && t.toLowerCase().includes(q)));
       if (!matchTitle && !matchEn && !matchDesc && !matchFabric && !matchTags) {
         return false;
       }

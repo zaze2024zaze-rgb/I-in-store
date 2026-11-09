@@ -133,8 +133,21 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     setTimeout(() => setCopiedBankId(null), 2500);
   };
 
+  const openExternalUrl = (targetUrl: string) => {
+    if (!targetUrl) return;
+    const link = document.createElement('a');
+    link.href = targetUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleProceedWhatsAppOrder = async () => {
-    if (!customerName.trim() || !customerPhone.trim()) {
+    const cleanName = (customerName || '').trim();
+    const cleanPhone = (customerPhone || '').trim();
+    if (!cleanName || !cleanPhone) {
       setFormError('يرجى كتابة الاسم الكريم ورقم الجوال للتواصل');
       return;
     }
@@ -149,13 +162,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     const orderNumber = 'IN-' + Math.floor(10000 + Math.random() * 90000);
     const orderDetails = {
       orderNumber,
-      customerName: customerName.trim(),
-      customerPhone: customerPhone.trim(),
-      customerCity: customerCity.trim(),
-      customerAddress: customerAddress.trim(),
+      customerName: cleanName,
+      customerPhone: cleanPhone,
+      customerCity: (customerCity || '').trim(),
+      customerAddress: (customerAddress || '').trim(),
       paymentMethod: activeTab === 'bank_deposit' ? ('bank_deposit' as const) : ('whatsapp_order' as const),
       depositBank: activeTab === 'bank_deposit' ? selectedBank : undefined,
-      notes: depositNotes.trim(),
+      notes: (depositNotes || '').trim(),
       currency,
       yerRate,
     };
@@ -191,7 +204,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     onOrderCreated(newOrder, false);
 
     const url = generateWhatsAppDirectLink(items, totals, orderDetails);
-    window.open(url, '_blank', 'noopener,noreferrer');
+    openExternalUrl(url);
 
     setOrderSentSuccess({
       orderNumber,
@@ -300,7 +313,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               </p>
               <div className="flex flex-wrap gap-2 pt-1">
                 <button
-                  onClick={() => window.open(orderSentSuccess.url, '_blank', 'noopener,noreferrer')}
+                  onClick={() => openExternalUrl(orderSentSuccess.url)}
                   className="flex-1 bg-[#25D366] hover:bg-[#20BD5A] text-white py-2 px-2.5 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />

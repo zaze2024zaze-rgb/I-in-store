@@ -370,5 +370,47 @@ test('order logistics: order lifecycle transitions accurately from pending to de
   assert.equal(getStepIndex('cancelled'), -1);
 });
 
+test('product search: withstands missing or undefined properties without throwing', () => {
+  const minimalProduct: any = {
+    id: 'prod_test_1',
+    title: 'فستان مخملي',
+  };
 
+  const matchesSearch = (p: any, query: string) => {
+    if (!query || !query.trim()) return true;
+    const q = query.toLowerCase().trim();
+    const matchTitle = Boolean(p.title && p.title.toLowerCase().includes(q));
+    const matchEn = Boolean(p.titleEn && p.titleEn.toLowerCase().includes(q));
+    const matchDesc = Boolean(p.description && p.description.toLowerCase().includes(q));
+    const matchFabric = Boolean(p.fabricDetails && p.fabricDetails.toLowerCase().includes(q));
+    const matchTags = Array.isArray(p.tags) && p.tags.some((t: string) => Boolean(t && t.toLowerCase().includes(q)));
+    return matchTitle || matchEn || matchDesc || matchFabric || matchTags;
+  };
 
+  assert.equal(matchesSearch(minimalProduct, 'مخملي'), true);
+  assert.equal(matchesSearch(minimalProduct, 'حرير'), false);
+  assert.equal(matchesSearch(minimalProduct, ''), true);
+});
+
+test('cleanForFirestore: recursively removes undefined values from objects', () => {
+  const cleanForFirestore = <T>(data: T): any => {
+    if (data === null || data === undefined) return null;
+    return JSON.parse(JSON.stringify(data));
+  };
+
+  const rawOrder = {
+    id: 'ord_123',
+    customerName: 'محمد أحمد',
+    trackingNumber: undefined,
+    shippingCarrier: undefined,
+    depositBank: undefined,
+    total: 350,
+  };
+
+  const cleaned = cleanForFirestore(rawOrder);
+  assert.equal('trackingNumber' in cleaned, false);
+  assert.equal('shippingCarrier' in cleaned, false);
+  assert.equal('depositBank' in cleaned, false);
+  assert.equal(cleaned.id, 'ord_123');
+  assert.equal(cleaned.total, 350);
+});

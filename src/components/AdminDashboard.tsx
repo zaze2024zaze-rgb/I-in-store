@@ -2916,7 +2916,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             if (orderFilterStatus !== 'all' && ord.status !== orderFilterStatus) {
               return false;
             }
-            if (orderSearchQuery.trim()) {
+            if ((orderSearchQuery || '').trim()) {
               const q = orderSearchQuery.toLowerCase().trim();
               const matchNum = Boolean(ord.orderNumber?.toLowerCase().includes(q) || ord.id?.toLowerCase().includes(q));
               const matchName = Boolean(ord.customerName?.toLowerCase().includes(q));
@@ -3437,14 +3437,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <div className="space-y-3">
               {customers
                 .filter((cust) => {
-                  const custName = cust.name || 'عميل المتجر';
-                  const custPhone = cust.phone || '';
+                  const custName = typeof cust.name === 'string' ? cust.name : 'عميل المتجر';
+                  const custPhone = typeof cust.phone === 'string' ? cust.phone : '';
+                  const cleanQuery = (customerSearchQuery || '').toLowerCase().trim();
                   const matchQuery =
-                    !customerSearchQuery.trim() ||
-                    custName.toLowerCase().includes(customerSearchQuery.toLowerCase()) ||
-                    custPhone.includes(customerSearchQuery) ||
-                    (cust.city && cust.city.toLowerCase().includes(customerSearchQuery.toLowerCase())) ||
-                    (cust.id && cust.id.toLowerCase().includes(customerSearchQuery.toLowerCase()));
+                    !cleanQuery ||
+                    custName.toLowerCase().includes(cleanQuery) ||
+                    custPhone.includes(cleanQuery) ||
+                    (cust.city && typeof cust.city === 'string' && cust.city.toLowerCase().includes(cleanQuery)) ||
+                    (cust.id && typeof cust.id === 'string' && cust.id.toLowerCase().includes(cleanQuery));
 
                   const matchStatus =
                     customerFilterStatus === 'all' ||
@@ -3455,9 +3456,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 })
                 .map((cust) => {
                   const isActive = cust.isActive !== false;
-                  const custName = cust.name || 'عميل المتجر';
-                  const custPhone = cust.phone || '';
-                  const initialChar = custName.trim() ? custName.trim().charAt(0) : 'ع';
+                  const custName = typeof cust.name === 'string' ? cust.name : 'عميل المتجر';
+                  const custPhone = typeof cust.phone === 'string' ? cust.phone : '';
+                  const trimmedName = custName.trim();
+                  const initialChar = trimmedName ? trimmedName.charAt(0) : 'ع';
                   const regDate = cust.createdAt ? new Date(cust.createdAt).toLocaleDateString('ar-YE') : 'مؤخراً';
                   return (
                     <div
